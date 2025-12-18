@@ -122,6 +122,6 @@
 
     "VNET_ROUTE_TUNNEL_TEST_INVALID_CONSISTENT_HASHING": {
         "desc": "VNET route tunnel configuration with invalid consistent_hashing_buckets value (exceeds uint16 max).",
-        "eStr": "does not satisfy the constraint"
+        "eStrKey": "InvalidValue"
     }
 }
