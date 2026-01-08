@@ -361,3 +361,4 @@ fabric_num_pipes
 fabric_pipe_map_uc
 fabric_pipe_map_mc
 system_contains_multiple_pipe_device
+sai_lag_default_crc_hash
