@@ -1,0 +1,64 @@
+From 09fcb18e31e5ef8f4a680ae6dc789dd20fe8bcf5 Mon Sep 17 00:00:00 2001
+From: Deepak Singhal <deepsinghal@microsoft.com>
+Date: Mon, 30 Mar 2026 07:38:06 +0000
+Subject: [PATCH] zebra: fix speed timer race with RTM_NEWLINK on
+ high-port-count devices
+
+On high-port-count devices (512+ ports), the if_zebra_speed_update()
+timer can fire before RTM_NEWLINK assigns a real ifindex. This causes
+two problems:
+
+1. zebra_ns_link_ifp() is called with ifindex=IFINDEX_INTERNAL (0),
+   leading to an rbtree assertion failure (SIGABRT) when multiple
+   interfaces race.
+
+2. if_add_update() sets ZEBRA_INTERFACE_ACTIVE prematurely, causing
+   RTM_NEWLINK to take the update branch instead of the new-interface
+   branch. The interface is never linked into the per-NS ifindex rbtree,
+   breaking route and nexthop resolution on affected ports.
+
+Fix both issues:
+- Add IFINDEX_INTERNAL guard in zebra_ns_link_ifp() to prevent crash
+- Guard if_add_update() in speed timer to prevent premature ACTIVE flag
+
+Upstream: FRRouting/frr#19792, FRRouting/frr#19794, FRRouting/frr#19804
+Signed-off-by: Deepak Singhal <deepsinghal@microsoft.com>
+---
+ zebra/interface.c | 3 ++-
+ zebra/zebra_ns.c  | 6 ++++++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/zebra/interface.c b/zebra/interface.c
+index 5ce222cc04..9855d1c60b 100644
+--- a/zebra/interface.c
++++ b/zebra/interface.c
+@@ -69,7 +69,8 @@ static void if_zebra_speed_update(struct event *thread)
+ 		zlog_info("%s: %s old speed: %u new speed: %u", __func__,
+ 			  ifp->name, ifp->speed, new_speed);
+ 		ifp->speed = new_speed;
+-		if_add_update(ifp);
++		if (ifp->ifindex != IFINDEX_INTERNAL)
++			if_add_update(ifp);
+ 		changed = true;
+ 	}
+ 
+diff --git a/zebra/zebra_ns.c b/zebra/zebra_ns.c
+index 578dee7b7e..12c38e2f8e 100644
+--- a/zebra/zebra_ns.c
++++ b/zebra/zebra_ns.c
+@@ -49,6 +49,12 @@ void zebra_ns_link_ifp(struct zebra_ns *zns, struct interface *ifp)
+ 	struct zebra_if *zif;
+ 	struct ifp_tree_link *link, tlink = {};
+ 
++	if (ifp->ifindex == IFINDEX_INTERNAL) {
++		if (IS_ZEBRA_DEBUG_EVENT)
++			zlog_debug("%s: interface %s not ready, ignoring", __func__, ifp->name);
++		return;
++	}
++
+ 	zif = ifp->info;
+ 	assert(zif != NULL);
+ 
+-- 
+2.34.1
+
