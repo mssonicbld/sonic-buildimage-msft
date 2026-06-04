@@ -169,7 +169,7 @@ RUN rm -rf /debs \
 {% endif %}
     && mkdir -p /opt       \
     && cd /opt             \
-    && wget https://raw.githubusercontent.com/p4lang/ptf/master/ptf_nn/ptf_nn_agent.py
+    && wget https://raw.githubusercontent.com/p4lang/ptf/23ebe7237f3c284032bda02fbd1f4a98f1bc12f4/ptf_nn/ptf_nn_agent.py
 
 {% if PTF_ENV_PY_VER == "mixed" %}
 RUN python3 -m venv --system-site-packages env-python3
@@ -214,7 +214,7 @@ RUN pip3 install setuptools \
     && pip3 install retrying \
     && pip3 install jinja2 \
     && pip3 install scapy==2.5.0 \
-    && pip3 install thrift
+    && pip3 install thrift==0.22.0
 
 {% if docker_ptf_whls.strip() -%}
 # Copy locally-built Python wheel dependencies
