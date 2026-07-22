@@ -46,10 +46,11 @@ mkdir -p $REDIS_DIR/sonic-db
 mkdir -p /etc/supervisor/conf.d/
 
 if [ -f /etc/sonic/database_config$NAMESPACE_ID.json ]; then
-    cp /etc/sonic/database_config$NAMESPACE_ID.json $REDIS_DIR/sonic-db/database_config.json
+    cp /etc/sonic/database_config$NAMESPACE_ID.json $REDIS_DIR/sonic-db/database_config.json.tmp
 else
-    HOST_IP=$host_ip REDIS_PORT=$redis_port DATABASE_TYPE=$DATABASE_TYPE j2 /usr/share/sonic/templates/database_config.json.j2 > $REDIS_DIR/sonic-db/database_config.json
+    HOST_IP=$host_ip REDIS_PORT=$redis_port DATABASE_TYPE=$DATABASE_TYPE j2 /usr/share/sonic/templates/database_config.json.j2 > $REDIS_DIR/sonic-db/database_config.json.tmp
 fi
+mv $REDIS_DIR/sonic-db/database_config.json.tmp $REDIS_DIR/sonic-db/database_config.json
 
 # on VoQ system, we only publish redis_chassis instance and CHASSIS_APP_DB when
 # either chassisdb.conf indicates starts chassis_db or connect to chassis_db,
@@ -68,7 +69,9 @@ chassisdb_config="/usr/share/sonic/platform/chassisdb.conf"
 
 db_cfg_file="/var/run/redis/sonic-db/database_config.json"
 db_cfg_file_tmp="/var/run/redis/sonic-db/database_config.json.tmp"
+db_cfg_file_publish="/var/run/redis/sonic-db/database_config.json.publish"
 cp $db_cfg_file $db_cfg_file_tmp
+cp $db_cfg_file $db_cfg_file_publish
 
 if [[ $DATABASE_TYPE == "chassisdb" ]]; then
     # Docker init for database-chassis
@@ -80,7 +83,7 @@ if [[ $DATABASE_TYPE == "chassisdb" ]]; then
     sonic-cfggen -j $db_cfg_file_tmp \
     -t /usr/share/sonic/templates/supervisord.conf.j2,/etc/supervisor/conf.d/supervisord.conf \
     -t /usr/share/sonic/templates/critical_processes.j2,/etc/supervisor/critical_processes
-    rm $db_cfg_file_tmp
+    rm $db_cfg_file_tmp $db_cfg_file_publish
     chown -R redis:redis $VAR_LIB_REDIS_CHASSIS_DIR
     chown -R redis:redis $REDIS_DIR
     exec /usr/local/bin/supervisord
@@ -91,10 +94,11 @@ fi
 if [[ $NAMESPACE_ID == "" && $DATABASE_TYPE == "" && ( $NAMESPACE_COUNT -gt 1 || $NUM_DPU -gt 1) ]]
 then
     if [ -f /etc/sonic/database_global.json ]; then
-        cp /etc/sonic/database_global.json $REDIS_DIR/sonic-db/database_global.json
+        cp /etc/sonic/database_global.json $REDIS_DIR/sonic-db/database_global.json.tmp
     else
-        j2 /usr/share/sonic/templates/database_global.json.j2 > $REDIS_DIR/sonic-db/database_global.json
+        j2 /usr/share/sonic/templates/database_global.json.j2 > $REDIS_DIR/sonic-db/database_global.json.tmp
     fi
+    mv $REDIS_DIR/sonic-db/database_global.json.tmp $REDIS_DIR/sonic-db/database_global.json
 fi
 # delete chassisdb config to generate supervisord config
 update_chassisdb_config -j $db_cfg_file_tmp -d
@@ -103,11 +107,13 @@ sonic-cfggen -j $db_cfg_file_tmp \
 -t /usr/share/sonic/templates/critical_processes.j2,/etc/supervisor/critical_processes
 
 if [[ "$start_chassis_db" != "1" ]] && [[ -z "$chassis_db_address" ]]; then
-     cp $db_cfg_file_tmp $db_cfg_file
+     mv $db_cfg_file_tmp $db_cfg_file
+     rm -f $db_cfg_file_publish
 else
-     update_chassisdb_config -j $db_cfg_file -p $chassis_db_port
+     update_chassisdb_config -j $db_cfg_file_publish -p $chassis_db_port
+     mv $db_cfg_file_publish $db_cfg_file
+     rm -f $db_cfg_file_tmp
 fi
-rm $db_cfg_file_tmp
 
 # copy dump.rdb file to each instance for restoration
 DUMPFILE=/var/lib/redis/dump.rdb
