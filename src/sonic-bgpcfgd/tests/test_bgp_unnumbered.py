@@ -57,6 +57,45 @@ def test_is_interface_neighbor_none():
 def test_is_interface_neighbor_trailing_junk():
     assert is_interface_neighbor('Ethernet0foo') is False
 
+def test_is_interface_neighbor_ethernet_subinterface():
+    assert is_interface_neighbor('Ethernet0.100') is True
+
+def test_is_interface_neighbor_portchannel_subinterface():
+    assert is_interface_neighbor('PortChannel101.200') is True
+
+def test_is_interface_neighbor_eth_subinterface_short_form():
+    assert is_interface_neighbor('Eth24.15') is True
+
+def test_is_interface_neighbor_po_subinterface_short_form():
+    assert is_interface_neighbor('Po101.15') is True
+
+# --- Short-form negative test cases ---
+
+def test_is_interface_neighbor_eth_short_form():
+    # Bare short-form without subinterface dot is not valid (no kernel interface "Eth24" exists)
+    assert is_interface_neighbor('Eth24') is False
+
+def test_is_interface_neighbor_po_short_form():
+    # Bare short-form without subinterface dot is not valid (no kernel interface "Po101" exists)
+    assert is_interface_neighbor('Po101') is False
+
+def test_is_interface_neighbor_eth_no_number():
+    assert is_interface_neighbor('Eth') is False
+
+def test_is_interface_neighbor_po_no_number():
+    assert is_interface_neighbor('Po') is False
+
+def test_is_interface_neighbor_eth_lowercase():
+    assert is_interface_neighbor('eth24') is False
+
+def test_is_interface_neighbor_po_lowercase():
+    assert is_interface_neighbor('po101') is False
+
+def test_is_interface_neighbor_eth_uppercase():
+    assert is_interface_neighbor('ETH24') is False
+
+def test_is_interface_neighbor_po_uppercase():
+    assert is_interface_neighbor('PO24') is False
 
 # --- Template rendering tests ---
 
@@ -79,15 +118,24 @@ def test_unnumbered_dual_stack_rendering():
     assert 'neighbor PortChannel101 activate' in result
 
 
-def test_unnumbered_v6only_rendering():
-    """Interface neighbor with v6only=true renders only IPv6 address family."""
-    result = render_general_instance('Ethernet0', {'asn': '65200', 'name': 'spine2', 'v6only': 'true'})
+def test_unnumbered_address_family_v6():
+    """Interface neighbor with address_family=v6 renders only IPv6 address family."""
+    result = render_general_instance('Ethernet0', {'asn': '65200', 'name': 'spine2', 'address_family': 'v6'})
     assert 'neighbor Ethernet0 interface peer-group PEER_UNNUMBERED' in result
     # IPv6 should be present
     assert 'address-family ipv6' in result
     assert 'neighbor Ethernet0 activate' in result
     # IPv4 should NOT be present
     assert 'address-family ipv4' not in result
+
+
+def test_unnumbered_address_family_v4():
+    """Interface neighbor with address_family=v4 renders only IPv4 address family."""
+    result = render_general_instance('Ethernet0', {'asn': '65200', 'name': 'spine2', 'address_family': 'v4'})
+    assert 'neighbor Ethernet0 interface peer-group PEER_UNNUMBERED' in result
+    assert 'address-family ipv4' in result
+    assert 'neighbor Ethernet0 activate' in result
+    assert 'address-family ipv6' not in result
 
 
 def test_ipv4_neighbor_unchanged():
