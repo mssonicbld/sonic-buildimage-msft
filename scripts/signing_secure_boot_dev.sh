@@ -1,7 +1,7 @@
 #!/bin/bash
 # This script is signing boot components: shim, mmx, grub, kernel and kernel modules in development env.
 
-## Enable debug output for script & exit code when failing occurs 
+## Enable debug output for script & exit code when failing occurs
 set -x -e
 
 print_usage() {
@@ -79,9 +79,9 @@ for efi in $efi_file_list
 do
     # grep filename from full path
     efi_filename=$(echo $efi | grep -o '[^/]*$')
-    
+
     if echo $efi_filename | grep -e "shim" -e "grub" -e "mm"; then
-    
+
         clean_file ${efi}-signed
 
         echo "signing efi file - full path: ${efi} filename: ${efi_filename}"
@@ -92,7 +92,7 @@ do
         cp ${efi}-signed $FS_ROOT/boot/${efi_filename}
 
         # verifying signature of mm & shim efi files.
-        ./scripts/secure_boot_signature_verification.sh -c $PEM_CERT -e $FS_ROOT/boot/${efi_filename} 
+        ./scripts/secure_boot_signature_verification.sh -c $PEM_CERT -e $FS_ROOT/boot/${efi_filename}
     fi
 done
 
@@ -100,7 +100,7 @@ done
 ## vmlinuz signing
 ######################
 
-CURR_VMLINUZ=$FS_ROOT/boot/vmlinuz-${LINUX_KERNEL_VERSION}-${CONFIGURED_ARCH}
+CURR_VMLINUZ=$FS_ROOT/boot/vmlinuz-${LINUX_KERNEL_VERSION}-sonic-${CONFIGURED_ARCH}
 
 # clean old files
 clean_file ${CURR_VMLINUZ}-signed
@@ -116,6 +116,25 @@ mv ${CURR_VMLINUZ}-signed ${CURR_VMLINUZ}
 #########################
 # Kernel Modules signing
 #########################
-./scripts/signing_kernel_modules.sh -l $LINUX_KERNEL_VERSION -c ${PEM_CERT} -p ${PEM_PRIV_KEY} -k ${FS_ROOT}
+./scripts/signing_kernel_modules.sh -l ${LINUX_KERNEL_VERSION} -c ${PEM_CERT} -p ${PEM_PRIV_KEY} -k ${FS_ROOT}/usr/lib/modules
+
+# Out-of-tree kernel modules signing
+tmpdir=/tmp/deb_extract_root
+for deb in $(find $FS_ROOT/platform -type f -name "*.deb")
+do
+    mkdir $tmpdir
+    dpkg-deb -R $deb $tmpdir
+    ./scripts/signing_kernel_modules.sh -l $LINUX_KERNEL_VERSION \
+                                        -c $PEM_CERT \
+                                        -p $PEM_PRIV_KEY \
+                                        -k $tmpdir
+    (cd $tmpdir; md5sum $(find . -path ./DEBIAN -prune -o -type f -print | cut -c3-) > DEBIAN/md5sums)
+    sudo dpkg-deb -b $tmpdir $deb
+    rm -rf $tmpdir
+done
+# Rescan packages and update Packages index
+if [[ -d $FS_ROOT/platform/common ]]; then
+    dpkg-scanpackages $FS_ROOT/platform/common | gzip -c > $FS_ROOT/platform/common/Packages.gz
+fi
 
 echo "$0 signing & verifying EFI files and Kernel Modules DONE"

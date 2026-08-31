@@ -30,6 +30,7 @@
 #include <linux/dmi.h>
 #include "pddf_fan_defs.h"
 #include "pddf_fan_driver.h"
+#include "pddf_multifpgapci_defs.h"
 
 /*#define FAN_DEBUG*/
 #ifdef FAN_DEBUG
@@ -106,6 +107,18 @@ void get_fan_extra_default_sysfs(int idx, char *str)
             break;
         case FAN12_PRESENT:
             strcpy(str, "fan12_status");
+            break;
+        case FAN13_PRESENT:
+            strcpy(str, "fan13_status");
+            break;
+        case FAN14_PRESENT:
+            strcpy(str, "fan14_status");
+            break;
+        case FAN15_PRESENT:
+            strcpy(str, "fan15_status");
+            break;
+        case FAN16_PRESENT:
+            strcpy(str, "fan16_status");
             break;
 		default:
 			break;
@@ -242,6 +255,10 @@ ssize_t fan_show_default(struct device *dev, struct device_attribute *da, char *
 		case FAN10_PRESENT:
 		case FAN11_PRESENT:
 		case FAN12_PRESENT:
+		case FAN13_PRESENT:
+		case FAN14_PRESENT:
+		case FAN15_PRESENT:
+		case FAN16_PRESENT:
 		case FAN1_DIRECTION:
 		case FAN2_DIRECTION:
 		case FAN3_DIRECTION:
@@ -254,6 +271,10 @@ ssize_t fan_show_default(struct device *dev, struct device_attribute *da, char *
 		case FAN10_DIRECTION:
 		case FAN11_DIRECTION:
 		case FAN12_DIRECTION:
+		case FAN13_DIRECTION:
+		case FAN14_DIRECTION:
+		case FAN15_DIRECTION:
+		case FAN16_DIRECTION:
 		case FAN1_INPUT:
 		case FAN2_INPUT:
 		case FAN3_INPUT:
@@ -266,6 +287,10 @@ ssize_t fan_show_default(struct device *dev, struct device_attribute *da, char *
 		case FAN10_INPUT:
 		case FAN11_INPUT:
 		case FAN12_INPUT:
+		case FAN13_INPUT:
+		case FAN14_INPUT:
+		case FAN15_INPUT:
+		case FAN16_INPUT:
 		case FAN1_PWM:
 		case FAN2_PWM:
 		case FAN3_PWM:
@@ -278,6 +303,10 @@ ssize_t fan_show_default(struct device *dev, struct device_attribute *da, char *
 		case FAN10_PWM:
 		case FAN11_PWM:
 		case FAN12_PWM:
+		case FAN13_PWM:
+		case FAN14_PWM:
+		case FAN15_PWM:
+		case FAN16_PWM:
 		case FAN1_FAULT:
 		case FAN2_FAULT:
 		case FAN3_FAULT:
@@ -290,6 +319,10 @@ ssize_t fan_show_default(struct device *dev, struct device_attribute *da, char *
 		case FAN10_FAULT:
 		case FAN11_FAULT:
 		case FAN12_FAULT:
+		case FAN13_FAULT:
+		case FAN14_FAULT:
+		case FAN15_FAULT:
+		case FAN16_FAULT:
 		case FAN_DUTY_CYCLE:
             status = attr_info->val.intval;
 			break;
@@ -359,6 +392,10 @@ ssize_t fan_store_default(struct device *dev, struct device_attribute *da, const
 		case FAN10_PWM:
 		case FAN11_PWM:
 		case FAN12_PWM:
+		case FAN13_PWM:
+		case FAN14_PWM:
+		case FAN15_PWM:
+		case FAN16_PWM:
 			ret = kstrtoint(buf, 10, &val);
 			if (ret)
 			{
@@ -513,11 +550,73 @@ int fan_fpgai2c_client_write(FAN_DATA_ATTR *udata, uint32_t val)
     return status;
 }
 
+int fan_multifpgapci_read(FAN_DATA_ATTR *udata, int *output)
+{
+    int status = 0;
+    uint32_t offset = 0;
+    struct pci_dev *pci_dev = NULL;
+
+    if (ptr_multifpgapci_readpci == NULL) {
+        printk(KERN_ERR "PDDF_FAN: pddf_multifpgapci_module is not loaded");
+        status = -1;
+        goto ret;
+    }
+
+    pci_dev = (struct pci_dev *)get_device_table(udata->devname);
+    if (pci_dev == NULL) {
+        printk(KERN_ERR "PDDF_FAN: Unable to get pci_dev of %s for %s\n", udata->devname, udata->aname);
+        status = -1;
+        goto ret;
+    }
+    offset = udata->devaddr + udata->offset;
+    status = ptr_multifpgapci_readpci(pci_dev, offset, output);
+
+ret:
+    if (status)
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
+
+    return status;
+}
+
+int fan_multifpgapci_write(FAN_DATA_ATTR *udata, uint32_t val)
+{
+    int status = 0;
+    uint32_t curr_val = 0;
+    uint32_t masked_val = 0;
+    uint32_t offset = 0;
+    struct pci_dev *pci_dev = NULL;
+
+    if (ptr_multifpgapci_readpci == NULL || ptr_multifpgapci_writepci == NULL) {
+        printk(KERN_ERR "PDDF_FAN: pddf_multifpgapci_module is not loaded");
+        return -1;
+    }
+
+    pci_dev = (struct pci_dev *)get_device_table(udata->devname);
+    if (pci_dev == NULL) {
+        printk(KERN_ERR "PDDF_FAN: Unable to get pci_dev of %s for %s\n", udata->devname, udata->aname);
+        status = -1;
+        goto ret;
+    }
+    offset = udata->devaddr + udata->offset;
+    status = ptr_multifpgapci_readpci(pci_dev, offset, &curr_val);
+    if (status)
+        goto ret;
+    masked_val =  curr_val & ~udata->mask;
+
+    status = ptr_multifpgapci_writepci(pci_dev, val | masked_val, offset);
+
+ret:
+    if (status)
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
+
+    return status;
+}
 
 int sonic_i2c_get_fan_present_default(void *client, FAN_DATA_ATTR *udata, void *info)
 {
     int status = 0;
     int val = 0;
+    bool skip_neg_check = false;
     struct fan_attr_info *painfo = (struct fan_attr_info *)info;
 
     if (strcmp(udata->devtype, "cpld") == 0)
@@ -527,25 +626,50 @@ int sonic_i2c_get_fan_present_default(void *client, FAN_DATA_ATTR *udata, void *
     else if (strcmp(udata->devtype, "fpgai2c") == 0)
     {
         val = fan_fpgai2c_client_read(udata);
+    }
+    else if (strcmp(udata->devtype, "multifpgapci") == 0)
+    {
+        status = fan_multifpgapci_read(udata, &val);
+        if (status)
+            goto ret;
+
+        skip_neg_check = true;
     }
     else
     {
 	    val = i2c_smbus_read_byte_data((struct i2c_client *)client, udata->offset);
     }
-	
-	if (val < 0)
-		status = val;
-	else
-		painfo->val.intval = ((val & udata->mask) == udata->cmpval);
-    
+
+    if (!skip_neg_check && val < 0)
+        status = val;
+    else
+        painfo->val.intval = ((val & udata->mask) == udata->cmpval);    
+
+ret:
+    if (status)
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
 
     return status;
+}
+
+int count_trailing_zeros(uint32_t mask) {
+    int count = 0;
+    // All bits in mask are 0
+    if (mask == 0) {
+        return 32;
+    }
+    while ((mask & 1) == 0) {
+        mask >>= 1;
+        count++;
+    }
+    return count;
 }
 
 int sonic_i2c_get_fan_rpm_default(void *client, FAN_DATA_ATTR *udata, void *info)
 {
     int status = 0;
-	int val = 0;
+    int val = 0;
+    bool skip_neg_check = false;
     struct fan_attr_info *painfo = (struct fan_attr_info *)info;
 
     if (strcmp(udata->devtype, "cpld") == 0)
@@ -555,6 +679,17 @@ int sonic_i2c_get_fan_rpm_default(void *client, FAN_DATA_ATTR *udata, void *info
     else if (strcmp(udata->devtype, "fpgai2c") == 0)
     {
         val = fan_fpgai2c_client_read(udata);
+    }
+    else if (strcmp(udata->devtype, "multifpgapci") == 0)
+    {
+        status = fan_multifpgapci_read(udata, &val);
+        if (status)
+            goto ret;
+
+        if (udata->mask != 0) {
+            val = (int)(((uint32_t)val & udata->mask) >> count_trailing_zeros(udata->mask));
+        }
+        skip_neg_check = true;
     }
     else
     {
@@ -565,28 +700,40 @@ int sonic_i2c_get_fan_rpm_default(void *client, FAN_DATA_ATTR *udata, void *info
         else if (udata->len ==2)
         {
             val = i2c_smbus_read_word_swapped((struct i2c_client *)client, udata->offset);
-            
         }
     }
 
-	if (val < 0)
-		status = val;
-	else
-	{
-		if (udata->is_divisor)
-			painfo->val.intval = udata->mult / (val >> 3);
-		else
-			painfo->val.intval = udata->mult * val;
-	}
+    if (!skip_neg_check && val < 0) {
+        status = val;
+    } else {
+        if (udata->is_divisor) {
+            int divisor = val >> 3;
+            if (divisor == 0) {
+                printk(KERN_ERR "%s: failed to calculate fan rpm, divisor is 0\n", __FUNCTION__);
+                return -1;
+            } else if (divisor < 0) {
+                painfo->val.intval = 0;
+            } else {
+                painfo->val.intval = udata->mult / divisor;
+            }
+        } else {
+            painfo->val.intval = udata->mult * val;
+        }
+    }
 
-	return status;
+ret:
+    if (status)
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
+
+    return status;
 }
 
 
 int sonic_i2c_get_fan_direction_default(void *client, FAN_DATA_ATTR *udata, void *info)
 {
     int status = 0;
-	int val = 0;
+    int val = 0;
+    bool skip_neg_check = false;
     struct fan_attr_info *painfo = (struct fan_attr_info *)info;
 
     if (strcmp(udata->devtype, "cpld") == 0)
@@ -597,15 +744,28 @@ int sonic_i2c_get_fan_direction_default(void *client, FAN_DATA_ATTR *udata, void
     {
         val = fan_fpgai2c_client_read(udata);
     }
+    else if (strcmp(udata->devtype, "multifpgapci") == 0)
+    {
+        status = fan_multifpgapci_read(udata, &val);
+        if (status)
+            goto ret;
+
+        skip_neg_check = true;
+    }
     else
     {
 	    val = i2c_smbus_read_byte_data((struct i2c_client *)client, udata->offset);
     }
 
-    if (val < 0)
+    if (!skip_neg_check && val < 0)
         status = val;
     else
         painfo->val.intval = ((val & udata->mask) == udata->cmpval);
+
+ret:
+    if (status) {
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
+    }
 
     return status;
 }
@@ -617,12 +777,18 @@ int sonic_i2c_set_fan_pwm_default(struct i2c_client *client, FAN_DATA_ATTR *udat
 	int val = 0;
     struct fan_attr_info *painfo = (struct fan_attr_info *)info;
 
-	val = painfo->val.intval & udata->mask;
+	val = painfo->val.intval;
 
 	if (val > 255)
 	{
 	  return -EINVAL;
 	}
+
+	if (strcmp(udata->devtype, "multifpgapci") == 0)
+	{
+	    val <<= count_trailing_zeros(udata->mask);
+	}
+	val &= udata->mask;
 
     if (strcmp(udata->devtype, "cpld") == 0)
     {
@@ -631,6 +797,10 @@ int sonic_i2c_set_fan_pwm_default(struct i2c_client *client, FAN_DATA_ATTR *udat
     else if (strcmp(udata->devtype, "fpgai2c") == 0)
     {
         status = fan_fpgai2c_client_write(udata, val);
+    }
+    else if (strcmp(udata->devtype, "multifpgapci") == 0)
+    {
+        status = fan_multifpgapci_write(udata, val);
     }
     else
     {
@@ -650,6 +820,9 @@ int sonic_i2c_set_fan_pwm_default(struct i2c_client *client, FAN_DATA_ATTR *udat
         }
     }
 
+    if (status)
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
+
     return status;
 }
 
@@ -657,7 +830,9 @@ int sonic_i2c_set_fan_pwm_default(struct i2c_client *client, FAN_DATA_ATTR *udat
 int sonic_i2c_get_fan_pwm_default(void *client, FAN_DATA_ATTR *udata, void *info)
 {
     int status = 0;
-	int val = 0;
+    int val = 0;
+    bool skip_neg_check = false;
+    bool skip_mask = false;
     struct fan_attr_info *painfo = (struct fan_attr_info *)info;
 
     if (strcmp(udata->devtype, "cpld") == 0)
@@ -668,6 +843,18 @@ int sonic_i2c_get_fan_pwm_default(void *client, FAN_DATA_ATTR *udata, void *info
     {
         val = fan_fpgai2c_client_read(udata);
     }
+    else if (strcmp(udata->devtype, "multifpgapci") == 0)
+    {
+        status = fan_multifpgapci_read(udata, &val);
+        if (status)
+            goto ret;
+
+        if (udata->mask != 0) {
+            val = (int)(((uint32_t)val & udata->mask) >> count_trailing_zeros(udata->mask));
+        }
+        skip_neg_check = true;
+        skip_mask = true;
+    }
     else
     {
         if (udata->len == 1)
@@ -677,24 +864,30 @@ int sonic_i2c_get_fan_pwm_default(void *client, FAN_DATA_ATTR *udata, void *info
         else if (udata->len ==2)
         {
             val = i2c_smbus_read_word_swapped((struct i2c_client *)client, udata->offset);
-            
+
         }
     }
 
-	if (val < 0)
-		status = val;
-	else
-	{
-		val = val & udata->mask;
-		painfo->val.intval = val;
-	}
+    if (!skip_neg_check && val < 0) {
+        status = val;
+    } else {
+        if (!skip_mask)
+            val = val & udata->mask;
+        painfo->val.intval = val;
+    }
+
+ret:
+    if (status)
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
+
     return status;
 }
 
 int sonic_i2c_get_fan_fault_default(void *client, FAN_DATA_ATTR *udata, void *info)
 {
     int status = 0;
-	int val = 0;
+    int val = 0;
+    bool skip_neg_check = false;
     struct fan_attr_info *painfo = (struct fan_attr_info *)info;
 
 	/*Assuming fan fault to be denoted by 1 byte only*/
@@ -706,15 +899,28 @@ int sonic_i2c_get_fan_fault_default(void *client, FAN_DATA_ATTR *udata, void *in
     {
         val = fan_fpgai2c_client_read(udata);
     }
+    else if (strcmp(udata->devtype, "multifpgapci") == 0)
+    {
+        status = fan_multifpgapci_read(udata, &val);
+        if (status)
+            goto ret;
+
+        skip_neg_check = true;
+    }
     else
     {
 	    val = i2c_smbus_read_byte_data((struct i2c_client *)client, udata->offset);
     }
 
-	if (val < 0)
-		status = val;
-	else
-		painfo->val.intval = ((val & udata->mask) == udata->cmpval);
+    if (!skip_neg_check && val < 0)
+        status = val;
+    else
+        painfo->val.intval = ((val & udata->mask) == udata->cmpval);
+
+ret:
+    if (status)
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
+
     return status;
 }
 
@@ -802,6 +1008,8 @@ int sonic_i2c_get_fan_dc_default(void *client, FAN_DATA_ATTR *udata, void *info)
     int status = 0;
     int val = 0;
     uint32_t dc = 0;
+    bool skip_neg_check = false;
+    bool skip_mask = false;
     struct fan_attr_info *painfo = (struct fan_attr_info *)info;
 
     if (strcmp(udata->devtype, "cpld") == 0)
@@ -811,6 +1019,18 @@ int sonic_i2c_get_fan_dc_default(void *client, FAN_DATA_ATTR *udata, void *info)
     else if (strcmp(udata->devtype, "fpgai2c") == 0)
     {
         val = fan_fpgai2c_client_read(udata);
+    }
+    else if (strcmp(udata->devtype, "multifpgapci") == 0)
+    {
+        status = fan_multifpgapci_read(udata, &val);
+        if (status)
+            goto ret;
+
+        if (udata->mask != 0) {
+            val = (int)(((uint32_t)val & udata->mask) >> count_trailing_zeros(udata->mask));
+        }
+        skip_neg_check = true;
+        skip_mask = true;
     }
     else
     {
@@ -825,11 +1045,11 @@ int sonic_i2c_get_fan_dc_default(void *client, FAN_DATA_ATTR *udata, void *info)
         }
     }
 
-	if (val < 0)
-		status = val;
-    else
-    {
-        val = val & udata->mask;
+    if (!skip_neg_check && val < 0) {
+        status = val;
+    } else {
+        if (!skip_mask)
+            val = val & udata->mask;
         /* val is the fan_pwm which needs to be converted to duty cycle */
         if (pddf_fan_funcs.reg_value_to_duty_cycle)
         {
@@ -842,8 +1062,12 @@ int sonic_i2c_get_fan_dc_default(void *client, FAN_DATA_ATTR *udata, void *info)
             }
         }
     }
-    return status;
 
+ret:
+    if (status)
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
+
+    return status;
 }
 
 int sonic_i2c_set_fan_dc_default(void *client, FAN_DATA_ATTR *udata, void *info)
@@ -868,6 +1092,10 @@ int sonic_i2c_set_fan_dc_default(void *client, FAN_DATA_ATTR *udata, void *info)
         reg_val = val;
     }
 
+	if (strcmp(udata->devtype, "multifpgapci") == 0)
+	{
+	    reg_val <<= count_trailing_zeros(udata->mask);
+	}
 	reg_val = reg_val & udata->mask;
 
     if (strcmp(udata->devtype, "cpld") == 0)
@@ -877,6 +1105,10 @@ int sonic_i2c_set_fan_dc_default(void *client, FAN_DATA_ATTR *udata, void *info)
     else if (strcmp(udata->devtype, "fpgai2c") == 0)
     {
         status = fan_fpgai2c_client_write(udata, reg_val);
+    }
+    else if (strcmp(udata->devtype, "multifpgapci") == 0)
+    {
+        status = fan_multifpgapci_write(udata, reg_val);
     }
     else
     {
@@ -896,8 +1128,10 @@ int sonic_i2c_set_fan_dc_default(void *client, FAN_DATA_ATTR *udata, void *info)
         }
     }
 
-    return status;
+    if (status)
+        printk(KERN_ERR "%s: Error status = %d", __FUNCTION__, status);
 
+    return status;
 }
 
 ssize_t fan_show_string(struct device *dev, struct device_attribute *da, char *buf)

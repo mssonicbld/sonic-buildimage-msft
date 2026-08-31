@@ -68,8 +68,8 @@ if [ -f "$EFI_FILE" ]; then
     verify_efi $CERT_PEM $EFI_FILE
 fi
 
-if [ -d "$KERNEL_MODULES_DIR" ]; then
-    # Condition checking that all the kernel modules in the KERNEL_MODULES_DIR contain a signature.
+if [ ! -z "$KERNEL_MODULES_DIR" -a -d "$KERNEL_MODULES_DIR" ]; then
+    # Condition checking that all the kernel modules in the KERNEL_MODULES_DIR contain a signature if specified.
 
     # find all the kernel modules.
     modules_list=$(sudo find ${KERNEL_MODULES_DIR} -name "*.ko")
@@ -77,7 +77,7 @@ if [ -d "$KERNEL_MODULES_DIR" ]; then
     # Do sign for each found module
     kernel_modules_cnt=0
     for mod in $modules_list
-    do    
+    do
         # check Kernel module is signed.
         if ! grep -q "~Module signature appended~" "${mod}"; then
             echo "Error: Kernel module=${mod} have no signature appened."
@@ -87,7 +87,7 @@ if [ -d "$KERNEL_MODULES_DIR" ]; then
         if [ $VERBOSE = 'true' ]; then
             echo "kernel module named=${mod} have signature appended."
         fi
-        
+
         kernel_modules_cnt=$((kernel_modules_cnt+1))
     done
     echo "Num of kernel modules signed: kernel_modules_cnt=$kernel_modules_cnt"

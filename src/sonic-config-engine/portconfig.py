@@ -37,7 +37,7 @@ PORT_STR = "Ethernet"
 BRKOUT_MODE = "default_brkout_mode"
 CUR_BRKOUT_MODE = "brkout_mode"
 INTF_KEY = "interfaces"
-OPTIONAL_HWSKU_ATTRIBUTES = ["fec", "autoneg"]
+OPTIONAL_HWSKU_ATTRIBUTES = ["fec", "autoneg", "role"]
 
 BRKOUT_PATTERN = r'(\d{1,6})x(\d{1,6}G?)(\[(\d{1,6}G?,?)*\])?(\((\d{1,6})\))?'
 BRKOUT_PATTERN_GROUPS = 6
@@ -100,11 +100,80 @@ def get_hwsku_file_name(hwsku=None, platform=None):
             return candidate
     return None
 
+def get_fabric_monitor_config(hwsku=None, asic_name=None):
+    config_db = db_connect_configdb(asic_name)
+    if config_db is not None:
+       fabric_monitor_global = config_db.get_table("FABRIC_MONITOR")
+       if bool( fabric_monitor_global ):
+          return fabric_monitor_global
+
+    fabric_monitor_global = {}
+    if asic_name is not None:
+        asic_id = str(get_asic_id_from_name(asic_name))
+    else:
+        asic_id = None
+    fabric_monitor_config_file = device_info.get_path_to_fabric_monitor_config_file(hwsku, asic_id)
+    if not fabric_monitor_config_file:
+       return fabric_monitor_global
+    with open( fabric_monitor_config_file, "r" ) as openfile:
+       fabric_monitor_global = json.load( openfile )
+       openfile.close()
+
+    return fabric_monitor_global
+
+
+def get_fabric_port_config(hwsku=None, platform=None, fabric_port_config_file=None, hwsku_config_file=None, asic_name=None):
+    config_db = db_connect_configdb(asic_name)
+    if config_db is not None and fabric_port_config_file is None:
+       port_data = config_db.get_table("FABRIC_PORT")
+       if bool(port_data):
+          ports = ast.literal_eval(json.dumps(port_data))
+          return ports
+
+    if asic_name is not None:
+        asic_id = str(get_asic_id_from_name(asic_name))
+    else:
+        asic_id = None
+
+    if not fabric_port_config_file:
+        fabric_port_config_file = device_info.get_path_to_fabric_port_config_file(hwsku, asic_id)
+        if not fabric_port_config_file:
+            return {}
+    # else  parse fabric_port_config.ini
+    ports = {}
+
+    # Default column definition
+    # ../../device/arista/x86_64-arista_7800r3_48cq2_lc/Arista-7800R3-48CQ2-C48/fabric_port_config.ini
+    # # name              lanes     isolateStatus
+    # Fabric0             0         False
+
+    titles = ['name', 'lanes', 'isolateStatus']
+    with open(fabric_port_config_file) as data:
+        for line in data:
+            if line.startswith('#'):
+                if "name" in line:
+                    titles = line.strip('#').split()
+                continue;
+            tokens = line.split()
+            if len(tokens) < 2:
+                continue
+            name_index = titles.index('name')
+            name = tokens[name_index]
+            data = {}
+            for i, item in enumerate(tokens):
+                if i == name_index:
+                    continue
+                data[titles[i]] = item
+            data.setdefault('alias', name)
+            ports[name] = data
+    return ports
+
 def get_port_config(hwsku=None, platform=None, port_config_file=None, hwsku_config_file=None, asic_name=None):
     config_db = db_connect_configdb(asic_name)
+    
+    config_db_hwsku = device_info.get_localhost_info('hwsku', config_db=config_db)
     # If available, Read from CONFIG DB first
-    if config_db is not None and port_config_file is None:
-
+    if config_db is not None and port_config_file is None and (hwsku is None or config_db_hwsku == hwsku):
         port_data = config_db.get_table("PORT")
         if bool(port_data):
             ports = ast.literal_eval(json.dumps(port_data))
@@ -285,8 +354,10 @@ class BreakoutCfg(object):
     def get_config(self):
         # Ensure that we have corret number of configured lanes
         lanes_used = 0
+        total_num_ports = 0
         for entry in self._breakout_mode_entry:
             lanes_used += entry.num_assigned_lanes
+            total_num_ports += entry.num_ports
 
         if lanes_used > len(self._lanes):
             raise RuntimeError("Assigned lines count is more that available!")
@@ -304,12 +375,20 @@ class BreakoutCfg(object):
 
                 lanes = self._lanes[lane_id:lane_id + lanes_per_port]
 
-                ports[interface_name] = {
+                port_config = {
                     'alias': self._breakout_capabilities[alias_id],
                     'lanes': ','.join(lanes),
                     'speed': str(entry.default_speed),
-                    'index': self._indexes[lane_id]
+                    'index': self._indexes[lane_id],
+                    'subport': "0" if total_num_ports == 1 else str(alias_id + 1)
                 }
+                
+                # If the lane speed is greater than 50G, enable FEC
+                if entry.default_speed // lanes_per_port >= 50000 and \
+                        (device_info.get_sonic_version_info() or {}).get('asic_type') != 'mellanox':
+                    port_config['fec'] = 'rs'
+
+                ports[interface_name] = port_config
 
                 lane_id += lanes_per_port
                 alias_id += 1
@@ -346,7 +425,7 @@ def parse_platform_json_file(hwsku_json_file, platform_json_file):
 
     for intf in port_dict[INTF_KEY]:
         if intf not in hwsku_dict[INTF_KEY]:
-            raise Exception("{} is not available in hwsku_dict".format(intf))
+            continue
 
         # take default_brkout_mode from hwsku.json
         brkout_mode = hwsku_dict[INTF_KEY][intf][BRKOUT_MODE]
@@ -354,9 +433,13 @@ def parse_platform_json_file(hwsku_json_file, platform_json_file):
         child_ports = get_child_ports(intf, brkout_mode, platform_json_file)
 
         # take optional fields from hwsku.json
-        for key, item in hwsku_dict[INTF_KEY][intf].items():
-            if key in OPTIONAL_HWSKU_ATTRIBUTES:
-                child_ports.get(intf)[key] = item
+        hwsku_entry = hwsku_dict[INTF_KEY]
+        for child_port in child_ports:
+            if child_port in hwsku_entry:
+                for key, item in hwsku_entry[child_port].items():
+                    if key in OPTIONAL_HWSKU_ATTRIBUTES:
+                        for child in child_ports:
+                            child_ports.get(child)[key] = item
 
         ports.update(child_ports)
 

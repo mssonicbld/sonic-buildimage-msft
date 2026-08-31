@@ -15,7 +15,9 @@
 
 function debug()
 {
-    /usr/bin/logger $1
+    # Use --id=$$ so all messages from this script share the parent shell's PID,
+    # preventing rsyslog imuxsock ratelimiter memory growth.
+    /usr/bin/logger --id=$$ -- "$1"
     /bin/echo `date` "- $1" >> ${DEBUGLOG}
 }
 
@@ -66,7 +68,7 @@ function wait_for_database_service()
     done
 
     # Wait for configDB initialization
-    until [[ $($SONIC_DB_CLI CONFIG_DB GET "CONFIG_DB_INITIALIZED") ]];
+    until [[ $($SONIC_DB_CLI CONFIG_DB GET "CONFIG_DB_INITIALIZED") -eq 1 ]];
         do sleep 1;
     done
 }
@@ -80,6 +82,9 @@ function getBootType()
         ;;
     *SONIC_BOOT_TYPE=fastfast*)
         TYPE='fastfast'
+        ;;
+    *SONIC_BOOT_TYPE=express*)
+        TYPE='express'
         ;;
     *SONIC_BOOT_TYPE=fast*|*fast-reboot*)
         # check that the key exists
@@ -101,7 +106,7 @@ start() {
 
     lock_service_state_change
 
-    mkdir -p /host/warmboot
+    mkdir -p /host/warmboot$DEV
 
     wait_for_database_service
     check_warm_boot
@@ -110,9 +115,9 @@ start() {
 
     if [[ x"$WARM_BOOT" == x"true" ]]; then
         # Leave a mark for syncd scripts running inside docker.
-        touch /host/warmboot/warm-starting
+        touch /host/warmboot$DEV/warm-starting
     else
-        rm -f /host/warmboot/warm-starting
+        rm -f /host/warmboot$DEV/warm-starting
     fi
 
     startplatform

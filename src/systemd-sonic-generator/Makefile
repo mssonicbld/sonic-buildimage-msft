@@ -1,9 +1,8 @@
 CC=gcc
-CFLAGS += -std=gnu99 -D_GNU_SOURCE
 
 CXX=g++
-CXXFLAGS += -std=c++11 -D_GNU_SOURCE -I ./
-LDFLAGS += -l stdc++ -lpthread -lboost_filesystem -lboost_system -lgtest
+CXXFLAGS += -std=c++20 -D_GNU_SOURCE -I ./
+LDFLAGS += -l stdc++ -lpthread -lboost_filesystem -lboost_system -lgtest -ljson-c
 
 BINARY = systemd-sonic-generator
 

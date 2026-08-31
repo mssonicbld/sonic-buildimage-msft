@@ -235,6 +235,20 @@ def docker_from_env_side_effect():
     return dock_client()
 
 
+def mock_os_execv(cmd, args):
+    # global current_test_name, current_test_no, current_test_data
+    global mock_containers
+
+    if cmd == "/usr/bin/docker-rs" and len(args) == 3 and args[1] == "wait":
+        container_name = args[2]
+        if container_name in mock_containers:
+            mock_containers[container_name].wait()
+            return 0
+
+    print("Unexpected command in mock_os_execv: cmd={} args={}".format(cmd, args))
+    return -1
+
+
 def check_mock_containers():
     global current_test_data
 
@@ -318,13 +332,13 @@ class Table:
         d = self.data[key]
         for (k, v) in items:
             d[k] = v
-        
+
 
     def check(self):
         expected = self.get_val(current_test_data, [POST, self.db, self.tbl])
 
         ret = check_subset(expected, self.data)
-        
+
         if ret != 0:
             print("Failed test={} no={} ret={}".format(
                 current_test_name, current_test_no, ret))
@@ -430,7 +444,7 @@ class mock_subscriber:
             return (key, "", mock_tbl.get(key)[1])
         else:
             return ("", "", {})
-   
+
 
     def getDbConnector(self):
         return self.dbconn
@@ -507,7 +521,7 @@ def kube_join_side_effect(ip, port, insecure):
     else:
         kube_return = 0
         return (1, "not joined", "error")
-    
+
 
 def kube_reset_side_effect(flag):
     global kube_actions
@@ -529,10 +543,10 @@ def check_kube_actions():
     ret = 0
     expected = {}
     expected[KUBE_CMD] = current_test_data.get(KUBE_CMD, {})
-     
+
     if expected[KUBE_CMD]:
         ret = check_subset(expected, kube_actions)
-    
+
     if ret != 0:
         print("Failed test={} no={} ret={}".format(
             current_test_name, current_test_no, ret))
@@ -540,7 +554,7 @@ def check_kube_actions():
         print("expect: {}".format(json.dumps(expected, indent=4)))
         return -1
     return 0
-    
+
 
 def set_mock_kube(kube_labels, kube_join, kube_reset):
     kube_labels.side_effect = kube_labels_side_effect
@@ -562,6 +576,9 @@ def set_mock_image_op(clean_image, tag_latest):
 
 
 def str_comp(needle, hay):
+    if isinstance(needle, list) and isinstance(hay, list):
+        return needle == hay
+
     nlen = len(needle)
     hlen = len(hay)
 
@@ -657,7 +674,7 @@ def mock_procs_init():
 def mock_subproc_side_effect(cmd, shell=False, stdout=None, stderr=None):
     global procs_index
 
-    assert shell == True
+    assert shell == isinstance(cmd, str)
     assert stdout == subprocess.PIPE
     assert stderr == subprocess.PIPE
     index = procs_index
@@ -673,7 +690,7 @@ class mock_reqget:
         return current_test_data.get(REQ, "")
 
 
-def mock_reqget_side_effect(url, cert, verify=True):
+def mock_reqget_side_effect(url, cert, verify=True, timeout=None):
     return mock_reqget()
 
 

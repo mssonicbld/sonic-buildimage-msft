@@ -1,5 +1,5 @@
 #!/bin/bash
-# This script is signing kernel modules by using sign-file tool 
+# This script is signing kernel modules by using sign-file tool
 
 usage() {
     cat <<EOF
@@ -54,9 +54,8 @@ if [ ! -f ${PEM_PRIVATE_KEY} ]; then
     exit 1
 fi
 
-kbuild_ver_major="$(cut -d '.' -f 1 <<< "$LINUX_KERNEL_VERSION")"."$(cut -d '.' -f 2 <<< "$LINUX_KERNEL_VERSION")"
 if [ -z ${LOCAL_SIGN_FILE} ]; then
-    LOCAL_SIGN_FILE="/usr/lib/linux-kbuild-${kbuild_ver_major}/scripts/sign-file"
+    LOCAL_SIGN_FILE="/usr/lib/linux-kbuild-${LINUX_KERNEL_VERSION}/scripts/sign-file"
 fi
 
 if [ ! -f ${LOCAL_SIGN_FILE} ]; then
@@ -66,7 +65,7 @@ if [ ! -f ${LOCAL_SIGN_FILE} ]; then
 fi
 
 if [ -z ${LOCAL_EXTRACT_CERT} ]; then
-    LOCAL_EXTRACT_CERT="/usr/lib/linux-kbuild-${kbuild_ver_major}/scripts/extract-cert"
+    LOCAL_EXTRACT_CERT="/usr/lib/linux-kbuild-${LINUX_KERNEL_VERSION}/certs/extract-cert"
 fi
 
 if [ ! -f ${LOCAL_EXTRACT_CERT} ]; then
