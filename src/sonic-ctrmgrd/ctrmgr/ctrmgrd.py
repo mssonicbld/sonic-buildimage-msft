@@ -151,6 +151,7 @@ def is_systemd_active(feat):
 def restart_systemd_service(server, feat, owner):
     log_debug("Restart service {} to owner:{}".format(feat, owner))
     if not UNIT_TESTING:
+        subprocess.call(["systemctl", "reset-failed", str(feat)])
         status = subprocess.call(["systemctl", "restart", str(feat)])
     else:
         server.mod_db_entry(STATE_DB_NAME,
@@ -194,7 +195,7 @@ class MainServer:
 
 
     def register_timer(self, ts, handler, args=None):
-        """ Register timer based handler. 
+        """ Register timer based handler.
             The handler will be called on/after give timestamp, ts
         """
         self.timer_handlers[ts].append((handler, args))
@@ -232,7 +233,7 @@ class MainServer:
 
 
     def set_db_entry(self, db_name, table_name, key, data):
-        """ Set given data as complete data, which includes 
+        """ Set given data as complete data, which includes
             removing any fields that are in DB but not in data
         """
         conn = self.db_connectors[db_name]
@@ -459,7 +460,7 @@ class RemoteServerHandler:
 #   Handle Set_owner change:
 #       restart service and/or label add/drop
 #
-#   Handle remote_state change: 
+#   Handle remote_state change:
 #       When pending, trigger restart
 #
 class FeatureTransitionHandler:
@@ -488,7 +489,9 @@ class FeatureTransitionHandler:
         service_restart = False
 
         if set_owner == "local":
-            if ct_owner != "local":
+            # NOTE: no need to restart if the current owner is none,
+            # as none implies the container is not running.
+            if ct_owner != "local" and ct_owner != "none":
                 service_restart = True
         else:
             if (ct_owner != "none") and (remote_state == "pending"):
@@ -526,10 +529,10 @@ class FeatureTransitionHandler:
             log_debug("No change in feat={} set_owner={}. Bail out.".format(
                 key, set_owner))
             return
-        
+
         if key in self.st_data:
             log_debug("{} init={} old_set_owner={} owner={}".format(key, init, old_set_owner, set_owner))
-            self.handle_update(key, set_owner, 
+            self.handle_update(key, set_owner,
                     self.st_data[key][ST_FEAT_OWNER],
                     self.st_data[key][ST_FEAT_REMOTE_STATE])
 
@@ -551,18 +554,26 @@ class FeatureTransitionHandler:
 
         self.st_data[key] = _update_entry(dflt_st_feat, data)
         remote_state = self.st_data[key][ST_FEAT_REMOTE_STATE]
+        current_owner = self.st_data[key][ST_FEAT_OWNER]
 
         if (remote_state == REMOTE_RUNNING) and (old_remote_state != remote_state):
             # Tag latest
             start_time = datetime.datetime.now() + datetime.timedelta(
                     seconds=remote_ctr_config[TAG_IMAGE_LATEST])
             self.server.register_timer(start_time, self.do_tag_latest, (
-                    key, 
+                    key,
                     self.st_data[key][ST_FEAT_CTR_ID],
                     self.st_data[key][ST_FEAT_CTR_VER]))
 
             log_debug("try to tag latest label after {} seconds @{}".format(
                     remote_ctr_config[TAG_IMAGE_LATEST], start_time))
+        
+        # This is for going back to local without waiting the systemd restart time
+        # when k8s is down, can't deploy containers to worker and need to go back to local
+        # if current owner is already local, we don't do restart
+        if (current_owner != OWNER_LOCAL) and (remote_state == REMOTE_NONE) and (old_remote_state == REMOTE_STOPPED):
+            restart_systemd_service(self.server, key, OWNER_LOCAL)
+            return
 
         if (not init):
             if (old_remote_state == remote_state):
@@ -578,10 +589,10 @@ class FeatureTransitionHandler:
                     self.st_data[key][ST_FEAT_OWNER],
                     remote_state)
         return
-    
+
     def do_tag_latest(self, feat, docker_id, image_ver):
         ret = kube_commands.tag_latest(feat, docker_id, image_ver)
-        if ret != 0:
+        if ret == 1:
             # Tag latest failed. Retry after an interval
             self.start_time = datetime.datetime.now()
             self.start_time += datetime.timedelta(
@@ -590,7 +601,7 @@ class FeatureTransitionHandler:
 
             log_debug("Tag latest as local failed retry after {} seconds @{}".
                     format(remote_ctr_config[TAG_RETRY], self.start_time))
-        else:
+        elif ret == 0:
             last_version = self.st_data[feat][ST_FEAT_CTR_STABLE_VER]
             if last_version == image_ver:
                 last_version = self.st_data[feat][ST_FEAT_CTR_LAST_VER]
@@ -600,6 +611,10 @@ class FeatureTransitionHandler:
             self.st_data[ST_FEAT_CTR_LAST_VER] = last_version
             self.st_data[ST_FEAT_CTR_STABLE_VER] = image_ver
             self.do_clean_image(feat, image_ver, last_version)
+        elif ret == -1:
+            # This means the container we want to tag latest is not running
+            # so we don't need to do clean up
+            pass
 
     def do_clean_image(self, feat, current_version, last_version):
         ret = kube_commands.clean_image(feat, current_version, last_version)

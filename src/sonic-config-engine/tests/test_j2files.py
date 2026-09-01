@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import re
 
 from unittest import TestCase
 import tests.common_utils as utils
@@ -10,6 +11,7 @@ from sonic_py_common.general import getstatusoutput_noshell, getstatusoutput_nos
 
 class TestJ2Files(TestCase):
     def setUp(self):
+        self.yang = utils.YangWrapper()
         self.test_dir = os.path.dirname(os.path.realpath(__file__))
         self.script_file = [utils.PYTHON_INTERPRETTER, os.path.join(self.test_dir, '..', 'sonic-cfggen')]
         self.simple_minigraph = os.path.join(self.test_dir, 'simple-sample-graph.xml')
@@ -19,13 +21,21 @@ class TestJ2Files(TestCase):
         self.ztp_ip = os.path.join(self.test_dir, "sample-ztp-ip.json")
         self.ztp_inband_ip = os.path.join(self.test_dir, "sample-ztp-inband-ip.json")
         self.t0_minigraph = os.path.join(self.test_dir, 't0-sample-graph.xml')
+        self.t0_minigraph_syslog = os.path.join(self.test_dir, 't0-sample-graph-syslog.xml')
+        self.syslog_server_vrf = os.path.join(self.test_dir, 'syslog-server-vrf.json')
+        self.t0_minigraph_secondary_subnets = os.path.join(self.test_dir, 't0-sample-graph-secondary-subnets.xml')
+        self.t0_minigraph_common_dhcp_relay = os.path.join(self.test_dir, 't0-sample-graph-common-dhcp-relay.xml')
         self.t0_mvrf_minigraph = os.path.join(self.test_dir, 't0-sample-graph-mvrf.xml')
         self.t0_minigraph_nomgmt = os.path.join(self.test_dir, 't0-sample-graph-nomgmt.xml')
         self.t0_minigraph_two_mgmt = os.path.join(self.test_dir, 't0-sample-graph-two-mgmt.xml')
+        self.t0_minigraph_mgmt31 = os.path.join(self.test_dir, 't0-sample-graph-mgmt31.xml')
         self.t0_mvrf_minigraph_nomgmt = os.path.join(self.test_dir, 't0-sample-graph-mvrf-nomgmt.xml')
         self.pc_minigraph = os.path.join(self.test_dir, 'pc-test-graph.xml')
+        self.sonic_dhcp4relay_minigraph = os.path.join(self.test_dir, 't0-sonic-dhcp4relay-graph.xml')
         self.t0_port_config = os.path.join(self.test_dir, 't0-sample-port-config.ini')
         self.t0_port_config_tiny = os.path.join(self.test_dir, 't0-sample-port-config-tiny.ini')
+        self.t1_ss_port_config = os.path.join(self.test_dir, 't1-ss-sample-port-config.ini')
+        self.t1_ss_dpu_port_config = os.path.join(self.test_dir, 't1-ss-dpu-sample-port-config.ini')
         self.l1_l3_port_config = os.path.join(self.test_dir, 'l1-l3-sample-port-config.ini')
         self.t0_7050cx3_port_config = os.path.join(self.test_dir, 't0_7050cx3_d48c8_port_config.ini')
         self.t1_mlnx_minigraph = os.path.join(self.test_dir, 't1-sample-graph-mlnx.xml')
@@ -43,6 +53,7 @@ class TestJ2Files(TestCase):
         self.no_ip_helper_minigraph = os.path.join(self.test_dir, 't0-sample-no-ip-helper-graph.xml')
         self.nokia_ixr7250e_36x100g_t2_minigraph = os.path.join(self.test_dir, 'sample-nokia-ixr7250e-36x100g-t2-minigraph.xml')
         self.nokia_ixr7250e_36x400g_t2_minigraph = os.path.join(self.test_dir, 'sample-nokia-ixr7250e-36x400g-t2-minigraph.xml')
+        self.t2_sample_graph_chassis_packet = os.path.join(self.test_dir, 'sample-chassis-packet-lc-graph.xml')
         self.output_file = os.path.join(self.test_dir, 'output')
         os.environ["CFGGEN_UNIT_TESTING"] = "2"
 
@@ -67,7 +78,8 @@ class TestJ2Files(TestCase):
         dir_exist = True
         mode = {'arista': 'aboot',
                 'dell': 'onie',
-                'mellanox': 'onie'
+                'mellanox': 'onie',
+                'nexthop': 'onie'
                }
         echo_cmd1 = ["echo", '{}_platform={}'.format(mode[vendor], platform)]
         echo_cmd2 = ["sudo", "tee", "-a", "/host/machine.conf"]
@@ -126,6 +138,16 @@ class TestJ2Files(TestCase):
         argument = ['-m', self.t0_minigraph, '-p', self.t0_port_config, '-a', '{\"hwaddr\":\"e4:1d:2d:a5:f3:ad\"}', '-t', interfaces_template]
         self.run_script(argument, output_file=self.output_file)
         self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'interfaces'), self.output_file))
+        
+        # ZTP disabled, MGMT_INTERFACE defined, SYSLOG_SERVER defined
+        argument = ['-m', self.t0_minigraph_syslog, '-p', self.t0_port_config, '-a', '{\"hwaddr\":\"e4:1d:2d:a5:f3:ad\"}', '-t', interfaces_template]
+        self.run_script(argument, output_file=self.output_file)
+        self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'interfaces_syslog'), self.output_file))
+
+        # ZTP disabled, MGMT_INTERFACE defined, SYSLOG_SERVER with per-server VRF
+        argument = ['-m', self.t0_minigraph_syslog, '-j', self.syslog_server_vrf, '-p', self.t0_port_config, '-a', '{\"hwaddr\":\"e4:1d:2d:a5:f3:ad\"}', '-t', interfaces_template]
+        self.run_script(argument, output_file=self.output_file)
+        self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'interfaces_syslog_vrf'), self.output_file))
 
         argument = ['-m', self.t0_mvrf_minigraph, '-p', self.t0_port_config, '-a', '{\"hwaddr\":\"e4:1d:2d:a5:f3:ad\"}', '-t', interfaces_template]
         self.run_script(argument, output_file=self.output_file)
@@ -134,6 +156,11 @@ class TestJ2Files(TestCase):
         argument = ['-m', self.t0_minigraph_two_mgmt, '-p', self.t0_port_config, '-a', '{\"hwaddr\":\"e4:1d:2d:a5:f3:ad\"}', '-t', interfaces_template]
         self.run_script(argument, output_file=self.output_file)
         self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'two_mgmt_interfaces'), self.output_file), self.output_file)
+
+        # ZTP disabled, MGMT_INTERFACE with /31 subnet (no broadcast address)
+        argument = ['-m', self.t0_minigraph_mgmt31, '-p', self.t0_port_config, '-a', '{\"hwaddr\":\"e4:1d:2d:a5:f3:ad\"}', '-t', interfaces_template]
+        self.run_script(argument, output_file=self.output_file)
+        self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'interfaces_mgmt31'), self.output_file), self.output_file)
 
         # ZTP disabled, no MGMT_INTERFACE defined
         argument = ['-m', self.t0_minigraph_nomgmt, '-p', self.t0_port_config, '-a', '{\"hwaddr\":\"e4:1d:2d:a5:f3:ad\"}', '-t', interfaces_template]
@@ -159,17 +186,53 @@ class TestJ2Files(TestCase):
         self.run_script(argument, output_file=self.output_file)
         self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'wait_for_intf.sh'), self.output_file))
 
-        # Test generation of docker-dhcp-relay.supervisord.conf
         template_path = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-dhcp-relay', 'docker-dhcp-relay.supervisord.conf.j2')
-        argument = ['-m', self.t0_minigraph, '-p', self.t0_port_config, '-t', template_path]
+        argument = ['-m', self.t0_minigraph_common_dhcp_relay, '-p', self.t0_port_config, '-t', template_path]
         self.run_script(argument, output_file=self.output_file)
         self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'docker-dhcp-relay.supervisord.conf'), self.output_file))
 
         # Test generation of docker-dhcp-relay.supervisord.conf when a vlan is missing ip/ipv6 helpers
-        template_path = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-dhcp-relay', 'docker-dhcp-relay.supervisord.conf.j2')
+        template_path = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-dhcp-relay',
+                                     'docker-dhcp-relay.supervisord.conf.j2')
         argument = ['-m', self.no_ip_helper_minigraph, '-p', self.t0_port_config, '-t', template_path]
         self.run_script(argument, output_file=self.output_file)
-        self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'docker-dhcp-relay-no-ip-helper.supervisord.conf'), self.output_file))
+        self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR,
+                                               'docker-dhcp-relay-no-ip-helper.supervisord.conf'), self.output_file))
+
+        # Test generation of docker-dhcp-relay.supervisord.conf when a vlan has secondary subnets specified
+        template_path = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-dhcp-relay',
+                                     'docker-dhcp-relay.supervisord.conf.j2')
+        argument = ['-m', self.t0_minigraph_secondary_subnets, '-p', self.t0_port_config, '-t', template_path]
+        self.run_script(argument, output_file=self.output_file)
+        self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR,
+                                               'docker-dhcp-relay-secondary-subnets.supervisord.conf'), self.output_file))
+
+        # Test generation of docker-dhcp-relay.supervisord.conf when has_sonic_dhcpv4_relay is True and dhcp relay config is present
+        sample_data = os.path.join(self.test_dir, "dhcp-sonic-relay-enabled-sample.json")
+        template_path = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-dhcp-relay',
+                                     'docker-dhcp-relay.supervisord.conf.j2')
+        argument = ['-m', self.t0_minigraph, '-j', sample_data, '-p', self.t0_port_config, '-t', template_path]
+        self.run_script(argument, output_file=self.output_file)
+        self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR,
+                                               'docker-dhcp-relay-sonic-agent.supervisord.conf'), self.output_file))
+
+        # Test generation of docker-dhcp-relay.supervisord.conf when has_sonic_dhcpv4_relay is True and dhcp relay config is not present
+        sample_data = os.path.join(self.test_dir, "dhcp-sonic-relay-enabled-sample.json")
+        template_path = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-dhcp-relay',
+                                     'docker-dhcp-relay.supervisord.conf.j2')
+        argument = ['-m', self.sonic_dhcp4relay_minigraph, '-j', sample_data, '-p', self.t0_port_config, '-t', template_path]
+        self.run_script(argument, output_file=self.output_file)
+        self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR,
+                                               'docker-dhcp-relay-sonic-agent-no-relay-cfg.supervisord.conf'), self.output_file))
+
+        # Test generation of docker-dhcp-relay.supervisord.conf when has_sonic_dhcpv4_relay is False
+        sample_data = os.path.join(self.test_dir, "dhcp-sonic-relay-disabled-sample.json")
+        template_path = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-dhcp-relay',
+                                     'docker-dhcp-relay.supervisord.conf.j2')
+        argument = ['-m', self.t0_minigraph_common_dhcp_relay, '-j', sample_data, '-p', self.t0_port_config, '-t', template_path]
+        self.run_script(argument, output_file=self.output_file)
+        self.assertTrue(utils.cmp(os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR,
+                                  'docker-dhcp-relay.supervisord.conf'), self.output_file))
 
     def test_radv(self):
         # Test generation of radvd.conf with multiple ipv6 prefixes
@@ -203,12 +266,37 @@ class TestJ2Files(TestCase):
         self.run_script(argument, output_file=self.output_file)
         self.assertTrue(utils.cmp(expected_mgmt_ipv6, self.output_file))
 
+        # Test generation of lldpd.conf with PORT table (aliases, special ports, missing alias)
+        mgmt_iface_ipv4_with_ports_json = os.path.join(self.test_dir, "data", "lldp", "mgmt_iface_ipv4_with_ports.json")
+        expected_mgmt_ipv4_with_ports = os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'lldp_conf', 'lldpd-ipv4-iface-with-ports.conf')
+        argument = ['-j', mgmt_iface_ipv4_with_ports_json, '-t', lldpd_conf_template]
+        self.run_script(argument, output_file=self.output_file)
+        self.assertTrue(utils.cmp(expected_mgmt_ipv4_with_ports, self.output_file))
+
     def test_ipinip(self):
         ipinip_file = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-orchagent', 'ipinip.json.j2')
         argument = ['-m', self.t0_minigraph, '-p', self.t0_port_config, '-t', ipinip_file]
         self.run_script(argument, output_file=self.output_file)
 
         sample_output_file = os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'ipinip.json')
+        assert utils.cmp(sample_output_file, self.output_file), self.run_diff(sample_output_file, self.output_file)
+
+    def test_ipinip_subnet_decap_enable(self):
+        ipinip_file = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-orchagent', 'ipinip.json.j2')
+        extra_data = {"SUBNET_DECAP": {"AZURE": {"status": "enable"}}}
+        argument = ['-m', self.t0_minigraph, '-p', self.t0_port_config, '-a', json.dumps(extra_data), '-t', ipinip_file]
+        self.run_script(argument, output_file=self.output_file)
+
+        sample_output_file = os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'ipinip_subnet_decap_enable.json')
+        assert utils.cmp(sample_output_file, self.output_file), self.run_diff(sample_output_file, self.output_file)
+
+    def test_ipinip_disabled(self):
+        ipinip_file = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-orchagent', 'ipinip.json.j2')
+        extra_data = {"SYSTEM_DEFAULTS": {"ip_decap": {"status": "disabled"}}}
+        argument = ['-a', json.dumps(extra_data), '-t', ipinip_file]
+        self.run_script(argument, output_file=self.output_file)
+
+        sample_output_file = os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'ipinip_backend_no_storage.json')
         assert utils.cmp(sample_output_file, self.output_file), self.run_diff(sample_output_file, self.output_file)
 
     def test_l2switch_template(self):
@@ -231,6 +319,7 @@ class TestJ2Files(TestCase):
 
     def test_l1_ports_template(self):
         argument = ['-k', '32x1000Gb', '--preset', 'l1', '-p', self.l1_l3_port_config]
+        self.assertTrue(self.yang.validate(argument))
         output = self.run_script(argument)
         output_json = json.loads(output)
 
@@ -249,6 +338,7 @@ class TestJ2Files(TestCase):
 
     def test_l3_ports_template(self):
         argument = ['-k', '32x1000Gb', '--preset', 'l3', '-p', self.l1_l3_port_config]
+        self.assertTrue(self.yang.validate(argument))
         output = self.run_script(argument)
         output_json = json.loads(output)
 
@@ -282,6 +372,7 @@ class TestJ2Files(TestCase):
             ]
         }
         argument = ['-a', json.dumps(extra_args), '-k', 'Arista-7050CX3-32S-D48C8', '--preset', 'l2', '-p', self.t0_7050cx3_port_config]
+        self.assertTrue(self.yang.validate(argument))
         output = self.run_script(argument)
         output_json = json.loads(output)
 
@@ -290,6 +381,30 @@ class TestJ2Files(TestCase):
             sample_output_json = json.load(sample_output_fd)
         self.maxDiff = None
         self.assertEqual(sample_output_json, output_json)
+
+    def test_t1_smartswitch_template(self):
+        argument = ['-k', 'SSwitch-32x1000Gb', '--preset', 't1-smartswitch', '-p', self.t1_ss_port_config]
+        self.assertTrue(self.yang.validate(argument))
+        output = self.run_script(argument)
+        output_json = json.loads(output)
+
+        sample_output_file = os.path.join(self.test_dir, 'sample_output', 't1-smartswitch.json')
+        with open(sample_output_file) as sample_output_fd:
+            sample_output_json = json.load(sample_output_fd)
+
+        self.assertTrue(json.dumps(sample_output_json, sort_keys=True) == json.dumps(output_json, sort_keys=True))
+
+    def test_t1_smartswitch_dpu_template(self):
+        argument = ['-k', 'SS-DPU-1x400Gb', '--preset', 't1-smartswitch', '-p', self.t1_ss_dpu_port_config]
+        self.assertTrue(self.yang.validate(argument))
+        output = self.run_script(argument)
+        output_json = json.loads(output)
+
+        sample_output_file = os.path.join(self.test_dir, 'sample_output', 't1-smartswitch-dpu.json')
+        with open(sample_output_file) as sample_output_fd:
+            sample_output_json = json.load(sample_output_fd)
+
+        self.assertTrue(json.dumps(sample_output_json, sort_keys=True) == json.dumps(output_json, sort_keys=True))
 
     def test_qos_arista7050_render_template(self):
         self._test_qos_render_template('arista', 'x86_64-arista_7050_qx32s', 'Arista-7050-QX-32S', 'sample-arista-7050-t0-minigraph.xml', 'qos-arista7050.json')
@@ -360,7 +475,13 @@ class TestJ2Files(TestCase):
         self._test_qos_render_template('dell', 'x86_64-dell_s6100_c2538-r0', 'Force10-S6100', 'sample-dell-6100-t0-minigraph.xml', 'qos-dell6100.json', copy_files=True)
 
     def test_qos_arista7260_render_template(self):
-        self._test_qos_render_template('arista', 'x86_64-arista_7260cx3_64', 'Arista-7260CX3-D96C16', 'sample-arista-7260-t1-minigraph-remap-disabled.xml', 'qos-arista7260.json')
+        self._test_qos_render_template('arista', 'x86_64-arista_7260cx3_64', 'Arista-7260CX3-C64', 'sample-arista-7260-t1-minigraph-remap-disabled.xml', 'qos-arista7260.json')
+
+    def test_qos_arista7060x6_render_template(self):
+        self._test_qos_render_template('arista', 'x86_64-arista_7060x6_16pe_384c_b', 'Arista-7060X6-16PE-384C-B-O128S2', 'sample-arista-7060x6-t0-minigraph.xml', 'qos-arista7060x6.json')
+
+    def test_qos_arista7260t0_render_template(self):
+        self._test_qos_render_template('arista', 'x86_64-arista_7260cx3_64', 'Arista-7260CX3-D92C16', 'sample-arista-7260-t0-minigraph.xml', 'qos-arista7260-t0.json')
 
     def _test_qos_render_template(self, vendor, platform, sku, minigraph, expected, copy_files=False):
         file_exist, dir_exist = self.create_machine_conf(platform, vendor)
@@ -459,6 +580,58 @@ class TestJ2Files(TestCase):
             assert utils.cmp(sample_output_file, test_output)
             os.remove(test_output)
 
+    def test_qos_smartswitch_render_template(self):
+        if utils.PYvX_DIR != 'py3':
+            # Skip on python2 as the change will not be backported to previous version
+            return
+
+        dir_paths = [
+            '../../../device/mellanox/x86_64-mlnx_msn4700-r0/Mellanox-SN4700-O28',
+            '../../../device/mellanox/x86_64-mlnx_msn4700-r0/Mellanox-SN4700-O28'
+        ]
+        sample_outputs = [
+            'qos-mellanox4700-o28-t1-smartswitch.json',
+            'qos-mellanox4700-o28-t1-smartswitch_dyn.json'
+        ]
+        sample_minigraph_files = [
+            'sample-mellanox-4700-t1-minigraph-smartswitch.xml',
+            'sample-mellanox-4700-t1-minigraph-smartswitch.xml'
+        ]
+        buffer_files = [
+            'buffers.json.j2', # traditional buffer mode
+            'buffers_dynamic.json.j2' # dynamic buffer mode
+        ]
+
+        for i, path in enumerate(dir_paths):
+            device_template_path = os.path.join(self.test_dir, path)
+            sample_output = sample_outputs[i]
+            sample_minigraph_file = os.path.join(self.test_dir,sample_minigraph_files[i])
+            qos_file = os.path.join(device_template_path, 'qos.json.j2')
+            buf_file = os.path.join(device_template_path, buffer_files[i])
+            hwsku_json_file = os.path.join(device_template_path, 'hwsku.json')
+            plat_json_file = os.path.join(device_template_path, '../platform.json')
+            test_output = os.path.join(self.test_dir, 'output.json')
+
+            # copy qos_config.j2 & buffer_config.j2 to the target directory to have all templates in one directory
+            qos_config_file = os.path.join(self.test_dir, '..', '..', '..', 'files', 'build_templates', 'qos_config.j2')
+            shutil.copy2(qos_config_file, device_template_path)
+
+            buf_config_file = os.path.join(self.test_dir, '..', '..', '..', 'files', 'build_templates', 'buffers_config.j2')
+            shutil.copy2(buf_config_file, device_template_path)
+
+            argument = ['-m', sample_minigraph_file, '-p', plat_json_file, '-S', hwsku_json_file, '-t', "{},config-db".format(qos_file), '-t', "{},config-db".format(buf_file), '--print-data']
+            self.run_script(argument, output_file=test_output)
+
+            # cleanup
+            qos_config_file_new = os.path.join(device_template_path, 'qos_config.j2')
+            os.remove(qos_config_file_new)
+            buf_config_file_new = os.path.join(device_template_path, 'buffers_config.j2')
+            os.remove(buf_config_file_new)
+
+            sample_output_file = os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, sample_output)
+            assert utils.cmp_tables(sample_output_file, test_output)
+            os.remove(test_output)
+
     def test_config_brcm_render_template(self):
         if utils.PYvX_DIR != 'py3':
             #Skip on python2 as the change will not be backported to previous version
@@ -516,6 +689,11 @@ class TestJ2Files(TestCase):
         # copy buffers_config.j2 to the SKU directory to have all templates in one directory
         buffers_config_file = os.path.join(self.test_dir, '..', '..', '..', 'files', 'build_templates', 'buffers_config.j2')
         shutil.copy2(buffers_config_file, dir_path)
+        buffers_config_organization_file = os.path.join(
+            self.test_dir, '..', '..', '..', 'files', 'build_templates',
+            'buffers_config_organization.j2')
+        if os.path.isfile(buffers_config_organization_file):
+            shutil.copy2(buffers_config_organization_file, dir_path)
 
         minigraph = os.path.join(self.test_dir, minigraph)
         argument = ['-m', minigraph, '-p', port_config_ini_file, '-t', buffers_file]
@@ -524,9 +702,15 @@ class TestJ2Files(TestCase):
         # cleanup
         buffers_config_file_new = os.path.join(dir_path, 'buffers_config.j2')
         os.remove(buffers_config_file_new)
+        buffers_config_organization_file_new = os.path.join(
+            dir_path, 'buffers_config_organization.j2')
+        if os.path.isfile(buffers_config_organization_file_new):
+            os.remove(buffers_config_organization_file_new)
         self.remove_machine_conf(file_exist, dir_exist)
 
-        out_file_dir = os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR)
+        out_file_dir = os.path.dirname(
+            utils.get_sample_output_file(self.test_dir, expected)
+        )
         expected_files = [expected, self.modify_cable_len(expected, out_file_dir)]
         match = False
         diff = ''
@@ -549,6 +733,9 @@ class TestJ2Files(TestCase):
 
     def test_buffers_mellanox2410_render_template(self):
         self._test_buffers_render_template('mellanox', 'x86_64-mlnx_msn2410-r0', 'ACS-MSN2410', 'sample-mellanox-2410-t1-minigraph.xml', 'buffers.json.j2', 'buffers-mellanox2410.json')
+
+    def test_buffers_arista7260_render_template(self):
+        self._test_buffers_render_template('arista', 'x86_64-arista_7260cx3_64', 'Arista-7260CX3-D92C16', 'sample-arista-7260-t0-minigraph.xml', 'buffers.json.j2', 'buffer-arista7260-t0.json')
 
     def test_buffers_mellanox2410_dynamic_render_template(self):
         self._test_buffers_render_template('mellanox', 'x86_64-mlnx_msn2410-r0', 'ACS-MSN2410', 'sample-mellanox-2410-t1-minigraph.xml', 'buffers_dynamic.json.j2', 'buffers-mellanox2410-dynamic.json')
@@ -583,7 +770,59 @@ class TestJ2Files(TestCase):
                                                 minigraph=test_data[3],
                                                 buffer_template=test_data[4],
                                                 expected=test_data[5])
+            
+    def test_buffers_lt2_ft2_render_template(self):
+        if utils.PYvX_DIR != 'py3':
+            # Skip on python2 as the change will not be backported to previous version
+            return
+        
+        TEST_DATA = [
+            # (vendor, platform, sku, minigraph, buffer_template, sample_output )
+            ('arista', 'x86_64-arista_7060x6_64pe_b', 'Arista-7060X6-64PE-P32O64', 'sample-lt2-p32o64-minigraph.xml', 'buffers.json.j2', 'buffer-lt2-p32o64.json'),
+            ('arista', 'x86_64-arista_7060x6_64pe_b', 'Arista-7060X6-64PE-P64', 'sample-ft2-p64-minigraph.xml', 'buffers.json.j2', 'buffer-ft2-p64.json')
+        ]
+        
+        for test_data in TEST_DATA:
+            self._test_buffers_render_template(vendor=test_data[0],
+                                                platform=test_data[1],
+                                                sku=test_data[2],
+                                                minigraph=test_data[3],
+                                                buffer_template=test_data[4],
+                                                expected=test_data[5])
 
+    def test_buffers_frh_render_template(self):
+        if utils.PYvX_DIR != 'py3':
+            return
+
+        self._test_buffers_render_template(vendor='arista',
+                                            platform='x86_64-arista_7060x6_64pe_b',
+                                            sku='Arista-7060X6-64PE-B-O128',
+                                            minigraph='sample-frh-b-o128-minigraph.xml',
+                                            buffer_template='buffers.json.j2',
+                                            expected='buffer-frh-b-o128.json')
+
+    def test_buffers_urh_render_template(self):
+        if utils.PYvX_DIR != 'py3':
+            return
+
+        self._test_buffers_render_template(vendor='nexthop',
+                                            platform='x86_64-nexthop_5010-r0',
+                                            sku='NH-5010-F-O64',
+                                            minigraph='sample-urh-nh5010-minigraph.xml',
+                                            buffer_template='buffers.json.j2',
+                                            expected='buffer-urh-nh5010.json')
+
+    def test_buffers_lrh_render_template(self):
+        if utils.PYvX_DIR != 'py3':
+            return
+
+        self._test_buffers_render_template(vendor='nexthop',
+                                            platform='x86_64-nexthop_5010-r0',
+                                            sku='NH-5010-F-O64',
+                                            minigraph='sample-lrh-nh5010-minigraph.xml',
+                                            buffer_template='buffers.json.j2',
+                                            expected='buffer-lrh-nh5010.json')
+    
     def test_ipinip_multi_asic(self):
         ipinip_file = os.path.join(self.test_dir, '..', '..', '..', 'dockers', 'docker-orchagent', 'ipinip.json.j2')
         argument = ['-m', self.multi_asic_minigraph, '-p', self.multi_asic_port_config, '-t', ipinip_file, '-n', 'asic0']
@@ -598,8 +837,7 @@ class TestJ2Files(TestCase):
             'switch.json.j2'
         )
         constants_yml = os.path.join(
-            self.test_dir, '..', '..', '..', 'files', 'image_config',
-            'constants', 'constants.yml'
+            self.test_dir, 'data', 'constants.yml'
         )
         test_list = {
             "t1": {
@@ -615,8 +853,8 @@ class TestJ2Files(TestCase):
         }
         for _, v in test_list.items():
             argument = ["-m", v["graph"], "-p", v["port_config"], "-y", constants_yml, "-t", switch_template]
-            sample_output_file = os.path.join(
-                self.test_dir, 'sample_output', v["output"]
+            sample_output_file = utils.get_sample_output_file(
+                self.test_dir, v["output"]
             )
             self.run_script(argument, output_file=self.output_file)
             assert utils.cmp(sample_output_file, self.output_file), self.run_diff(sample_output_file, self.output_file)
@@ -628,8 +866,7 @@ class TestJ2Files(TestCase):
             'switch.json.j2'
         )
         constants_yml = os.path.join(
-            self.test_dir, '..', '..', '..', 'files', 'image_config',
-            'constants', 'constants.yml'
+            self.test_dir, 'data', 'constants.yml'
         )
         test_list = {
             "0": {
@@ -644,6 +881,35 @@ class TestJ2Files(TestCase):
         for _, v in test_list.items():
             os.environ["NAMESPACE_ID"] = v["namespace_id"]
             argument = ["-m", self.t1_mlnx_minigraph, "-y", constants_yml, "-t", switch_template]
+            sample_output_file = utils.get_sample_output_file(
+                self.test_dir, v["output"]
+            )
+            self.run_script(argument, output_file=self.output_file)
+            assert utils.cmp(sample_output_file, self.output_file), self.run_diff(sample_output_file, self.output_file)
+        os.environ["NAMESPACE_ID"] = ""
+
+    def test_swss_switch_render_template_t2(self):
+        # verify the ECMP hash seed changes per namespace
+        switch_template = os.path.join(
+            self.test_dir, '..', '..', '..', 'dockers', 'docker-orchagent',
+            'switch.json.j2'
+        )
+        constants_yml = os.path.join(
+            self.test_dir, 'data', 'constants.yml'
+        )
+        test_list = {
+            "0": {
+                "namespace_id": "1",
+                "output": "t2-switch-masic1.json"
+            },
+            "1": {
+                "namespace_id": "3",
+                "output": "t2-switch-masic3.json"
+            },
+        }
+        for _, v in test_list.items():
+            os.environ["NAMESPACE_ID"] = v["namespace_id"]
+            argument = ["-m", self.t2_sample_graph_chassis_packet, "-y", constants_yml, "-t", switch_template]
             sample_output_file = os.path.join(
                 self.test_dir, 'sample_output', v["output"]
             )
@@ -660,12 +926,52 @@ class TestJ2Files(TestCase):
         self.run_script(argument, output_file=self.output_file)
         assert utils.cmp(expected, self.output_file), self.run_diff(expected, self.output_file)
 
-    def test_ntp_conf(self):
-        conf_template = os.path.join(self.test_dir, "ntp.conf.j2")
-        ntp_interfaces_json = os.path.join(self.test_dir, "data", "ntp", "ntp_interfaces.json")
-        expected = os.path.join(self.test_dir, "sample_output", utils.PYvX_DIR, "ntp.conf")
+    def test_ndppd_conf_no_vlan_interfaces(self):
+        """Test ndppd.conf generation when no VLAN interfaces exist"""
+        conf_template = os.path.join(self.test_dir, "ndppd.conf.j2")
+        empty_json = os.path.join(self.test_dir, "data", "ndppd", "empty_vlan_interfaces.json")
+        
+        argument = ['-j', empty_json, '-t', conf_template]
+        self.run_script(argument, output_file=self.output_file)
+        
+        # Verify route-ttl is still generated even without VLAN interfaces
+        with open(self.output_file, 'r') as f:
+            content = f.read()
+            assert 'route-ttl 2147483647' in content
 
-        argument = ['-j', ntp_interfaces_json, '-t', conf_template]
+    def test_ntp_conf(self):
+        conf_template = os.path.join(self.test_dir, "chrony.conf.j2")
+        config_db_ntp_json = os.path.join(self.test_dir, "data", "ntp", "ntp_interfaces.json")
+        expected = os.path.join(self.test_dir, "sample_output", utils.PYvX_DIR, "chrony.conf")
+
+        argument = ['-j', config_db_ntp_json, '-t', conf_template]
+        self.run_script(argument, output_file=self.output_file)
+        assert utils.cmp(expected, self.output_file), self.run_diff(expected, self.output_file)
+
+    def test_ntp_smartswitch_conf(self):
+        conf_template = os.path.join(self.test_dir, "chrony.conf.j2")
+        config_db_ntp_json = os.path.join(self.test_dir, "data", "ntp", "ntp_smartswitch_interfaces.json")
+        expected = os.path.join(self.test_dir, "sample_output", utils.PYvX_DIR, "chrony_smartswitch.conf")
+
+        argument = ['-j', config_db_ntp_json, '-t', conf_template]
+        self.run_script(argument, output_file=self.output_file)
+        assert utils.cmp(expected, self.output_file), self.run_diff(expected, self.output_file)
+
+    def test_ntp_smartswitch_dpu_conf(self):
+        conf_template = os.path.join(self.test_dir, "chrony.conf.j2")
+        config_db_ntp_json = os.path.join(self.test_dir, "data", "ntp", "ntp_smartswitch_dpu_interfaces.json")
+        expected = os.path.join(self.test_dir, "sample_output", utils.PYvX_DIR, "chrony_smartswitch_dpu.conf")
+
+        argument = ['-j', config_db_ntp_json, '-t', conf_template]
+        self.run_script(argument, output_file=self.output_file)
+        assert utils.cmp(expected, self.output_file), self.run_diff(expected, self.output_file)
+
+    def test_ntp_keys(self):
+        conf_template = os.path.join(self.test_dir, "chrony.keys.j2")
+        config_db_ntp_json = os.path.join(self.test_dir, "data", "ntp", "ntp_interfaces.json")
+        expected = os.path.join(self.test_dir, "sample_output", utils.PYvX_DIR, "chrony.keys")
+
+        argument = ['-j', config_db_ntp_json, '-t', conf_template]
         self.run_script(argument, output_file=self.output_file)
         assert utils.cmp(expected, self.output_file), self.run_diff(expected, self.output_file)
 
@@ -695,10 +1001,107 @@ class TestJ2Files(TestCase):
             self.run_script(argument, output_file=self.output_file)
             assert utils.cmp(sample_output_file, self.output_file), self.run_diff(sample_output_file, self.output_file)
 
+    def test_dns_template_render(self):
+        conf_template = os.path.join(self.test_dir, '..', '..', '..', 'files', 'image_config', 'resolv-config', 'resolv.conf.j2')
+        static_dns_conf = os.path.join(self.test_dir, "data", "dns", "static_dns.json")
+        expected = os.path.join(self.test_dir, "data", "dns", "resolv.conf")
+
+        argument = ['-j', static_dns_conf, '-t', conf_template]
+        self.run_script(argument, output_file=self.output_file)
+        assert utils.cmp(expected, self.output_file), self.run_diff(expected, self.output_file)
 
     def test_buffers_edgezone_aggregator_render_template(self):
         self._test_buffers_render_template('arista', 'x86_64-arista_7060_cx32s', 'Arista-7060CX-32S-D48C8', 'sample-arista-7060-t0-minigraph.xml', 'buffers.json.j2', 'buffer-arista7060-t0.json')
 
+    def test_rsyslog_conf(self):
+        conf_template = os.path.join(self.test_dir, '..', '..', '..', 'files', 'image_config', 'rsyslog',
+                                     'rsyslog.conf.j2')
+        config_db_json = os.path.join(self.test_dir, "data", "rsyslog", "config_db.json")
+        additional_data = "{\"udp_server_ip\": \"1.1.1.1\", \"hostname\": \"kvm-host\"}"
+
+        argument = ['-j', config_db_json, '-t', conf_template, '-a', additional_data]
+        self.run_script(argument, output_file=self.output_file)
+        with open(self.output_file) as file:
+            pattern = r'^action.*Device="eth0".*'
+            for line in file:
+                assert not bool(re.match(pattern, line.strip())), "eth0 is not allowed in Mgfx device"
+        expected = os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'rsyslog.conf')
+        self.assertTrue(utils.cmp(expected, self.output_file), self.run_diff(expected, self.output_file))
+
+    def test_rsyslog_conf_docker0_ip(self):
+        conf_template = os.path.join(self.test_dir, '..', '..', '..', 'files', 'image_config', 'rsyslog',
+                                     'rsyslog.conf.j2')
+        config_db_json = os.path.join(self.test_dir, "data", "rsyslog", "config_db.json")
+        additional_data = "{\"udp_server_ip\": \"1.1.1.1\", \"hostname\": \"kvm-host\", " + \
+                          "\"docker0_ip\": \"2.2.2.2\"}"
+
+        argument = ['-j', config_db_json, '-t', conf_template, '-a', additional_data]
+        self.run_script(argument, output_file=self.output_file)
+        expected = os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'rsyslog_with_docker0.conf')
+        self.assertTrue(utils.cmp(expected, self.output_file), self.run_diff(expected, self.output_file))
+
+    def test_rsyslog_conf_same_ip(self):
+        conf_template = os.path.join(self.test_dir, '..', '..', '..', 'files', 'image_config', 'rsyslog',
+                                     'rsyslog.conf.j2')
+        config_db_json = os.path.join(self.test_dir, "data", "rsyslog", "config_db.json")
+        additional_data = "{\"udp_server_ip\": \"2.2.2.2\", \"hostname\": \"kvm-host\", " + \
+                          "\"docker0_ip\": \"2.2.2.2\"}"
+
+        argument = ['-j', config_db_json, '-t', conf_template, '-a', additional_data]
+        self.run_script(argument, output_file=self.output_file)
+        expected = os.path.join(self.test_dir, 'sample_output', utils.PYvX_DIR, 'rsyslog_same_ip.conf')
+        self.assertTrue(utils.cmp(expected, self.output_file), self.run_diff(expected, self.output_file))
+
+    def test_rsyslog_conf_welf_firewall_name_injection_stripped(self):
+        """welf_firewall_name injection payload must be collapsed to a harmless single line.
+
+        Payload: 'fw1\\naction(type="omprog" binary="/tmp/evil")'
+        The newline strip is the critical defence — without it the action() lands on its own
+        line and rsyslog executes /tmp/evil as root.  The quote/backslash strips are defence
+        in depth.  The test checks both independently.
+        """
+        import json
+        conf_template = os.path.join(self.test_dir, '..', '..', '..', 'files', 'image_config', 'rsyslog',
+                                     'rsyslog.conf.j2')
+        config_db_json = os.path.join(self.test_dir, "data", "rsyslog", "config_db.json")
+        payload = 'fw1\naction(type="omprog" binary="/tmp/evil")'
+        additional_data = json.dumps({
+            "udp_server_ip": "1.1.1.1",
+            "hostname": "fw-host",
+            "SYSLOG_CONFIG": {"GLOBAL": {"format": "welf", "welf_firewall_name": payload}},
+        })
+
+        argument = ['-j', config_db_json, '-t', conf_template, '-a', additional_data]
+        output = self.run_script(argument)
+
+        # 1. The fw= field must not be split across multiple lines.
+        fw_lines = [l for l in output.splitlines() if 'fw=' in l and 'WelfRemote' not in l]
+        self.assertEqual(len(fw_lines), 1, 'fw= field was split across lines — newline strip failed')
+
+        # 2. The injected omprog directive must not appear as a standalone line.
+        for line in output.splitlines():
+            self.assertFalse(
+                line.strip().startswith('action(type=') and 'omprog' in line and 'syslog-counter' not in line,
+                'Injected action directive appeared as standalone rsyslog line: ' + repr(line)
+            )
+
+    def test_rsyslog_conf_welf_firewall_name_clean(self):
+        """welf_firewall_name with a safe value must pass through unchanged."""
+        import json
+        conf_template = os.path.join(self.test_dir, '..', '..', '..', 'files', 'image_config', 'rsyslog',
+                                     'rsyslog.conf.j2')
+        config_db_json = os.path.join(self.test_dir, "data", "rsyslog", "config_db.json")
+        additional_data = json.dumps({
+            "udp_server_ip": "1.1.1.1",
+            "hostname": "fw-host",
+            "SYSLOG_CONFIG": {"GLOBAL": {"format": "welf", "welf_firewall_name": "clean-fw-name"}},
+        })
+
+        argument = ['-j', config_db_json, '-t', conf_template, '-a', additional_data]
+        output = self.run_script(argument)
+
+        self.assertIn('clean-fw-name', output,
+                      'Clean welf_firewall_name value not found in rendered rsyslog.conf')
 
     def tearDown(self):
         os.environ["CFGGEN_UNIT_TESTING"] = ""

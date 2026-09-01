@@ -70,7 +70,7 @@ def read_data(feature):
 
 def read_fields(state_db, feature, fields):
     # Read directly from STATE-DB, given fields
-    # for given feature. 
+    # for given feature.
     # Fields is a list of tuples (<field name>, <default val>)
     #
     tbl = swsscommon.Table(state_db, 'FEATURE')
@@ -100,11 +100,11 @@ def drop_label(state_db, feature, version):
     # Mark given feature version as dropped in labels.
     # Update is done in state-db.
     # ctrmgrd sets it with kube API server per reaschability
-    
+
     tbl = swsscommon.Table(state_db, KUBE_LABEL_TABLE)
     name = _get_local_version_key(feature)
     tbl.set(KUBE_LABEL_SET_KEY, [(name, version)])
-        
+
 
 def update_data(state_db, feature, data):
     # Update STATE-DB entry for this feature with given data
@@ -166,14 +166,13 @@ def update_state(state_db, feature, owner=None, version=None):
     sets owner, version & container-id for this feature in state-db.
 
     If owner is local, update label to block remote deploying same version or
-    if kube, sets state to "running". 
+    if kube, sets state to "running".
 
     """
     data = {
             CURRENT_OWNER: owner,
             DOCKER_ID: get_docker_id() if owner != "local" else feature,
             UPD_TIMESTAMP: str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-            "hello": "world",
             VERSION: version
             }
 
@@ -197,7 +196,7 @@ def do_freeze(feat, m):
         if UNIT_TESTING:
             break
         time.sleep(60)
-    
+
 
 def container_up(feature, owner, version):
     """
@@ -208,7 +207,7 @@ def container_up(feature, owner, version):
 
     This call does the basic check for if this starting-container can be allowed
     to run based on current state, and owner & version of this starting
-    container. 
+    container.
 
     If allowed to proceed, this info is recorded in state-db and return
     to enable container start the main application. Else it proceeds to
@@ -220,6 +219,9 @@ def container_up(feature, owner, version):
 
     debug_msg("args: feature={}, owner={}, version={} DB: set_owner={} state_data={}".format(
         feature, owner, version, set_owner, json.dumps(state_data, indent=4)))
+
+    if state_data[SYSTEM_STATE] == '':
+        return
 
     if owner == "local":
         update_state(state_db, feature, owner, version)
@@ -245,7 +247,7 @@ def container_up(feature, owner, version):
         else:
             debug_msg("{}: Skip remote_state({}) update".format(feature, mode))
 
-        
+
         i = 0
         while (mode != "ready"):
             if (i % 10) == 0:
@@ -253,7 +255,7 @@ def container_up(feature, owner, version):
             i += 1
 
             time.sleep(2)
-            mode, db_version = read_fields(state_db, 
+            mode, db_version = read_fields(state_db,
                     feature, [(REMOTE_STATE, "none"), (VERSION, "")])
             if version != db_version:
                 # looks like another instance has overwritten. Exit for now.
@@ -279,7 +281,7 @@ def main():
     parser.add_argument("-f", "--feature", required=True)
     parser.add_argument("-o", "--owner", choices=["local", "kube"], required=True)
     parser.add_argument("-v", "--version", required=True)
-    
+
     args = parser.parse_args()
     container_up(args.feature, args.owner, args.version)
 

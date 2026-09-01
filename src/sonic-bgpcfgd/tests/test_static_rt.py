@@ -68,8 +68,187 @@ def test_set():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
+        ]
+    )
+
+@patch('bgpcfgd.managers_static_rt.log_debug')
+def test_del_for_appl(mocked_log_debug):
+    class MockRedisConfigDbGet:
+        def __init__(self, cache=dict()):
+            self.cache = cache
+            self.CONFIG_DB = "CONFIG_DB"
+
+        def get(self, db, key, field):
+            if key in self.cache:
+                if field in self.cache[key]["value"]:
+                    return self.cache[key]["value"][field]
+            return None  # return nil
+
+    mgr = constructor()
+
+    set_del_test(
+        mgr,
+        "SET",
+        ("10.1.0.0/24", {
+            "nexthop": "PortChannel0001",
+        }),
+        True,
+        [
+            "ip route 10.1.0.0/24 PortChannel0001 tag 1",
+            "route-map STATIC_ROUTE_FILTER permit 10",
+            " match tag 1",
+            "router bgp 65100",
+            " address-family ipv4",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            " address-family ipv6",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
+        ]
+    )
+
+    #from "APPL_DB" instance, static route can not be uninstalled if the static route exists in config_db and "bfd"="false" (or no bfd field)
+    mgr.db_name = "APPL_DB"
+    cfg_db_cache = {
+        "STATIC_ROUTE|10.1.0.0/24": {
+            "value": {
+                "advertise": "false",
+                "nexthop": "PortChannel0001"
+            }
+        }
+    }
+    mgr.config_db = MockRedisConfigDbGet(cfg_db_cache)
+
+    set_del_test(
+        mgr,
+        "DEL",
+        ("10.1.0.0/24",),
+        True,
+        []
+    )
+    mocked_log_debug.assert_called_with("{} ignore appl_db static route deletion because of key {} exist in config_db and bfd is not true".format(mgr.db_name, "10.1.0.0/24"))
+
+    cfg_db_cache = {
+        "STATIC_ROUTE|10.1.0.0/24": {
+            "value": {
+                "advertise": "false",
+                "bfd": "false",
+                "nexthop": "PortChannel0001"
+            }
+        }
+    }
+    mgr.db_name = "APPL_DB"
+    mgr.config_db = MockRedisConfigDbGet(cfg_db_cache)
+
+    set_del_test(
+        mgr,
+        "DEL",
+        ("10.1.0.0/24",),
+        True,
+        []
+    )
+    mocked_log_debug.assert_called_with("{} ignore appl_db static route deletion because of key {} exist in config_db and bfd is not true".format(mgr.db_name, "10.1.0.0/24"))
+
+    #From "APPL_DB" instance, static route can be deleted if bfd field is true in config_db
+    set_del_test(
+        mgr,
+        "SET",
+        ("10.1.0.0/24", {
+            "nexthop": "PortChannel0001",
+        }),
+        True,
+        [
+            "ip route 10.1.0.0/24 PortChannel0001 tag 1",
+            "route-map STATIC_ROUTE_FILTER permit 10",
+            " match tag 1",
+            "router bgp 65100",
+            " address-family ipv4",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            " address-family ipv6",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
+        ]
+    )
+    cfg_db_cache = {
+        "STATIC_ROUTE|10.1.0.0/24": {
+            "value": {
+                "advertise": "false",
+                "bfd": "true",
+                "nexthop": "PortChannel0001"
+            }
+        }
+    }
+    mgr.db_name = "APPL_DB"
+    mgr.config_db = MockRedisConfigDbGet(cfg_db_cache)
+    set_del_test(
+        mgr,
+        "DEL",
+        ("10.1.0.0/24",),
+        True,
+        [
+            "no ip route 10.1.0.0/24 PortChannel0001 tag 1",
+            "router bgp 65100",
+            " address-family ipv4",
+            "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            " address-family ipv6",
+            "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit",
+            "no route-map STATIC_ROUTE_FILTER"
+        ]
+    )
+
+    #From "APPL_DB" instance, static route can be deleted if the static route does not in config_db
+    set_del_test(
+        mgr,
+        "SET",
+        ("10.1.0.0/24", {
+            "nexthop": "PortChannel0001",
+        }),
+        True,
+        [
+            "ip route 10.1.0.0/24 PortChannel0001 tag 1",
+            "route-map STATIC_ROUTE_FILTER permit 10",
+            " match tag 1",
+            "router bgp 65100",
+            " address-family ipv4",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            " address-family ipv6",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
+        ]
+    )
+
+    cfg_db_cache = {}
+    mgr.db_name = "APPL_DB"
+    mgr.config_db = MockRedisConfigDbGet(cfg_db_cache)
+    set_del_test(
+        mgr,
+        "DEL",
+        ("10.1.0.0/24",),
+        True,
+        [
+            "no ip route 10.1.0.0/24 PortChannel0001 tag 1",
+            "router bgp 65100",
+            " address-family ipv4",
+            "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            " address-family ipv6",
+            "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit",
+            "no route-map STATIC_ROUTE_FILTER"
         ]
     )
 
@@ -89,8 +268,11 @@ def test_set_nhportchannel():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -104,8 +286,11 @@ def test_set_nhportchannel():
             "router bgp 65100",
             " address-family ipv4",
             "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
             "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit",
             "no route-map STATIC_ROUTE_FILTER"
         ]
     )
@@ -127,8 +312,11 @@ def test_set_several_nhportchannels():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -152,8 +340,11 @@ def test_set_nhvrf():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -177,8 +368,11 @@ def test_set_blackhole():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -202,8 +396,11 @@ def test_set_vrf():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -227,8 +424,11 @@ def test_set_ipv6():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -253,8 +453,11 @@ def test_set_nh_only():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -279,8 +482,11 @@ def test_set_ifname_only():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -306,8 +512,11 @@ def test_set_with_empty_ifname():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -333,8 +542,11 @@ def test_set_with_empty_nh():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -360,8 +572,11 @@ def test_set_del():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
     set_del_test(
@@ -376,8 +591,11 @@ def test_set_del():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
             "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit",
             "no route-map STATIC_ROUTE_FILTER"
         ]
     )
@@ -401,8 +619,11 @@ def test_set_del():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -428,8 +649,11 @@ def test_set_same_route():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
     set_del_test(
@@ -475,8 +699,11 @@ def test_set_add_del_nh():
             "router bgp 65100 vrf vrfRED",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
     set_del_test(
@@ -533,8 +760,11 @@ def test_set_add_del_nh_ethernet():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
     set_del_test(
@@ -588,8 +818,11 @@ def test_set_no_action(mocked_log_debug):
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -604,7 +837,7 @@ def test_set_no_action(mocked_log_debug):
         True,
         []
     )
-    mocked_log_debug.assert_called_with("Nothing to update for static route default|10.1.1.0/24")
+    mocked_log_debug.assert_called_with("CONFIG_DB Nothing to update for static route default|10.1.1.0/24")
 
 @patch('bgpcfgd.managers_static_rt.log_debug')
 def test_del_no_action(mocked_log_debug):
@@ -616,7 +849,7 @@ def test_del_no_action(mocked_log_debug):
         True,
         []
     )
-    mocked_log_debug.assert_called_with("Nothing to update for static route default|10.1.1.0/24")
+    mocked_log_debug.assert_called_with("CONFIG_DB Nothing to update for static route default|10.1.1.0/24")
 
 def test_set_invalid_arg():
     mgr = constructor()
@@ -649,8 +882,11 @@ def test_set_invalid_blackhole(mocked_log_err):
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
     mocked_log_err.assert_called_with("Mandatory attribute not found for nexthop")
@@ -726,8 +962,11 @@ def test_set_del_bgp_asn_change():
         "router bgp 65100 vrf vrfRED",
         " address-family ipv4",
         "  redistribute static route-map STATIC_ROUTE_FILTER",
+        " exit-address-family",
         " address-family ipv6",
-        "  redistribute static route-map STATIC_ROUTE_FILTER"
+        "  redistribute static route-map STATIC_ROUTE_FILTER",
+        " exit-address-family",
+        "exit"
     ]
     def push_list(cmds):
         set_del_test.push_list_called = True
@@ -762,8 +1001,11 @@ def test_set_tag_enable():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -783,8 +1025,11 @@ def test_set_tag_disable():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -804,8 +1049,11 @@ def test_set_tag_change():
             "router bgp 65100",
             " address-family ipv4",
             "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
             " address-family ipv6",
-            "  redistribute static route-map STATIC_ROUTE_FILTER"
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
         ]
     )
 
@@ -821,3 +1069,121 @@ def test_set_tag_change():
             "ip route 10.1.0.0/24 10.0.0.57 tag 2",
         ]
     )
+
+def test_set_bfd_false():
+    mgr = constructor()
+    set_del_test(
+        mgr,
+        "SET",
+        ("10.1.0.0/24", {
+            "bfd": "false",
+            "nexthop": "PortChannel0001",
+        }),
+        True,
+        [
+            "ip route 10.1.0.0/24 PortChannel0001 tag 1",
+            "route-map STATIC_ROUTE_FILTER permit 10",
+            " match tag 1",
+            "router bgp 65100",
+            " address-family ipv4",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            " address-family ipv6",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
+        ]
+    )
+
+    set_del_test(
+        mgr,
+        "DEL",
+        ("10.1.0.0/24",),
+        True,
+        [
+            "no ip route 10.1.0.0/24 PortChannel0001 tag 1",
+            "router bgp 65100",
+            " address-family ipv4",
+            "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            " address-family ipv6",
+            "  no redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit",
+            "no route-map STATIC_ROUTE_FILTER"
+        ]
+    )
+
+def test_set_bfd_true():
+    mgr = constructor()
+    set_del_test(
+        mgr,
+        "SET",
+        ("10.1.0.0/24", {
+            "bfd": "false",
+            "nexthop": "PortChannel0001",
+        }),
+        True,
+        [
+            "ip route 10.1.0.0/24 PortChannel0001 tag 1",
+            "route-map STATIC_ROUTE_FILTER permit 10",
+            " match tag 1",
+            "router bgp 65100",
+            " address-family ipv4",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            " address-family ipv6",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
+        ]
+    )
+    #do nothing for adding smae route second time
+    set_del_test(
+        mgr,
+        "SET",
+        ("10.1.0.0/24", {
+            "bfd": "false",
+            "nexthop": "PortChannel0001",
+        }),
+        True,
+        [
+        ]
+    )
+    #clear internal cache if bfd flag is true
+    set_del_test(
+        mgr,
+        "SET",
+        ("10.1.0.0/24", {
+            "bfd": "true",
+            "nexthop": "PortChannel0001",
+        }),
+        True,
+        [
+        ]
+    )
+
+    #install the route becasue that cache was cleared above
+    set_del_test(
+        mgr,
+        "SET",
+        ("10.1.0.0/24", {
+            "bfd": "false",
+            "nexthop": "PortChannel0001",
+        }),
+        True,
+        [
+            "ip route 10.1.0.0/24 PortChannel0001 tag 1",
+            "route-map STATIC_ROUTE_FILTER permit 10",
+            " match tag 1",
+            "router bgp 65100",
+            " address-family ipv4",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            " address-family ipv6",
+            "  redistribute static route-map STATIC_ROUTE_FILTER",
+            " exit-address-family",
+            "exit"
+        ]
+    )
+

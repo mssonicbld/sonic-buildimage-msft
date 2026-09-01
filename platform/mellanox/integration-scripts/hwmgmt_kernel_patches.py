@@ -1,21 +1,38 @@
 #!/usr/bin/env python
+#
+# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
+# Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 
-import os
-import sys
-import shutil
-import argparse
-import copy
-import difflib
+from hwmgmt_helper import *
 
-from helper import *
-
-COMMIT_TITLE = "Intgerate HW-MGMT {} Changes"
+COMMIT_TITLE = "Integrate HW-MGMT {} Changes"
 
 PATCH_TABLE_LOC = "platform/mellanox/hw-management/hw-mgmt/recipes-kernel/linux/"
+PATCHWORK_LOC = "linux-{}/patchwork"
 PATCH_TABLE_NAME = "Patch_Status_Table.txt"
 PATCH_TABLE_DELIMITER = "----------------------"
 PATCH_NAME = "patch name"
 COMMIT_ID = "Upstream commit id"
+
+# Strips the subversion
+def get_kver(k_version):
+    major, minor, subversion = k_version.split(".")
+    k_ver = "{}.{}".format(major, minor)
+    return k_ver
 
 def trim_array_str(str_list):
     ret = [elem.strip() for elem in str_list]
@@ -30,12 +47,9 @@ def get_line_elements(line):
     columns = trim_array_str(columns_raw)
     return columns
 
-def load_patch_table(path, k_version):
-    patch_table_filename = os.path.join(path, PATCH_TABLE_NAME)
-
-    major, minor, subversion = k_version.split(".")
-    k_ver = "{}.{}".format(major, minor)
-
+def load_patch_table(path, k_ver, table_name=None):
+    table_name = table_name or PATCH_TABLE_NAME
+    patch_table_filename = os.path.join(path, table_name)
     print("Loading patch table {} kver:{}".format(patch_table_filename, k_ver))
 
     if not os.path.isfile(patch_table_filename):
@@ -94,14 +108,6 @@ def load_patch_table(path, k_version):
                     table.append(table_line)
     return table
 
-def build_commit_description(changes):
-    if not changes:
-        return ""
-    content = "\n"
-    content = content + " ## Patch List\n"
-    for key, value in changes.items():
-        content = content + f"* {key} : {value}\n"
-    return content
 
 class Data:
     # list of new upstream patches
@@ -116,8 +122,6 @@ class Data:
     old_non_up = list()
     # New series file written by hw_mgmt integration script
     new_series = list()
-    # List of new opts written by hw_mgmt integration script
-    updated_kcfg = list(tuple())
     # index of the mlnx_hw_mgmt patches start marker in old_series
     i_mlnx_start = -1 
     # index of the mlnx_hw_mgmt patches end marker in old_series
@@ -126,12 +130,11 @@ class Data:
     up_slk_series = list()
     # SLK series file content updated with non-upstream patches, used to generate diff
     agg_slk_series = list()
-    # Diff to be written into the series.patch file
-    agg_slk_series_diff = list()
-    # current kcfg opts
-    current_kcfg = list(tuple())
-    # current raw kconfig exclude data
-    kcfg_exclude = list()
+    # kernel version
+    k_ver = ""
+    # BMC-only patch names (inserted between nvidia_aspeed_bmc markers in series)
+    bmc_patches = list()
+
 
 class HwMgmtAction(Action):
 
@@ -149,24 +152,31 @@ class HwMgmtAction(Action):
 
         return action
 
+    def return_false(self, str_):
+        print(str_)
+        return False
+
     def check(self):
-        if not self.args.config_inclusion:
-            print("-> ERR: config_inclusion is missing")
-            return False
-
+        if not self.args.kernel_version:
+            return self.return_false("-> ERR: Kernel Version is missing")
         if not self.args.build_root:
-            print("-> ERR: build_root is missing")
-            return False
-        
-        if not os.path.isfile(self.args.config_inclusion):
-            print("-> ERR: config_inclusion {} doesn't exist".format(self.args.config_inclusion))
-            return False
-        
+            return self.return_false("-> ERR: build_root is missing")
         if not os.path.exists(self.args.build_root):
-            print("-> ERR: Build Root {} doesn't exist".format(self.args.build_root))
-            return False
-
+            return self.return_false("-> ERR: Build Root {} doesn't exist".format(self.args.build_root))
+        if not os.path.isfile(self.args.config_base_amd):
+            return self.return_false("-> ERR: config_base {} doesn't exist".format(self.args.config_base_amd))
+        if not os.path.isfile(self.args.config_base_arm):
+            return self.return_false("-> ERR: config_base_arm {} doesn't exist".format(self.args.config_base_arm))
+        if not os.path.isfile(self.args.config_inc_amd):
+            return self.return_false("-> ERR: config_inclusion {} doesn't exist".format(self.args.config_inc_amd))
+        if not os.path.isfile(self.args.config_inc_arm):
+            return self.return_false("-> ERR: config_inclusion {} doesn't exist".format(self.args.config_inc_arm))
+        if not os.path.isfile(self.args.config_base_aspeed):
+            return self.return_false("-> ERR: config_base_aspeed {} doesn't exist".format(self.args.config_base_aspeed))
+        if not os.path.isfile(self.args.config_inc_aspeed):
+            return self.return_false("-> ERR: config_inc_aspeed {} doesn't exist".format(self.args.config_inc_aspeed))
         return True
+
 
 class PreProcess(HwMgmtAction):
     def __init__(self, args):
@@ -176,36 +186,29 @@ class PreProcess(HwMgmtAction):
         return super(PreProcess, self).check()
 
     def perform(self):
-        """ Move MLNX Kconfig to the loc pointed by config_inclusion """
-        kcfg_sec = FileHandler.read_kconfig_inclusion(os.path.join(self.args.build_root, SLK_KCONFIG))
-        writable_opts = KCFG.get_writable_opts(KCFG.parse_opts_strs(kcfg_sec))
-        FileHandler.write_lines(self.args.config_inclusion, writable_opts)
-        print("-> OPTS written to temp config_inclusion file: \n{}".format(FileHandler.read_strip(self.args.config_inclusion, True)))
+        """ Move Base Kconfig to the loc pointed by config_inclusion """
+        shutil.copy2(self.args.config_base_amd, self.args.config_inc_amd)
+        shutil.copy2(self.args.config_base_arm, self.args.config_inc_arm)
+        shutil.copy2(self.args.config_base_aspeed, self.args.config_inc_aspeed)
+        print("-> Kconfig amd64/arm64/aspeed copied to the relevant directory")
     
+
 class PostProcess(HwMgmtAction):
     def __init__(self, args):
         super().__init__(args)
+        self.kcfg_handler = KConfigTask(self.args)
     
     def check(self):
         if not super(PostProcess, self).check():
             return False
-
         if not (self.args.patches and os.path.exists(self.args.patches)):
-            print("-> ERR: upstream patch directory is missing ")
-            return False
-
+            return self.return_false("-> ERR: upstream patch directory is missing ")
         if not (self.args.non_up_patches and os.path.exists(self.args.non_up_patches)):
-            print("-> ERR: non upstream patch directory is missing")
-            return False
-
+            return self.return_false("-> ERR: non upstream patch directory is missing")
         if not (self.args.series and os.path.isfile(self.args.series)):
-            print("-> ERR: series file doesn't exist {}".format(self.args.series))
-            return False
-
+            return self.return_false("-> ERR: series file doesn't exist {}".format(self.args.series))
         if not (self.args.current_non_up_patches and os.path.exists(self.args.current_non_up_patches)):
-            print("-> ERR: current non_up_patches doesn't exist {}".format(self.args.current_non_up_patches))
-            return False
-
+            return self.return_false("-> ERR: current non_up_patches doesn't exist {}".format(self.args.current_non_up_patches))
         return True
 
     def read_data(self):
@@ -213,19 +216,6 @@ class PostProcess(HwMgmtAction):
         Data.new_series = FileHandler.read_strip_minimal(self.args.series)
         Data.old_series = FileHandler.read_raw(os.path.join(self.args.build_root, SLK_SERIES))
         Data.old_non_up = FileHandler.read_strip_minimal(self.args.current_non_up_patches)
-
-        # Read the new kcfg
-        new_cfg = FileHandler.read_kconfig_inclusion(self.args.config_inclusion, None)
-        Data.updated_kcfg = KCFG.parse_opts_strs(new_cfg)
-
-        # entire current config, [common] + [amd64]
-        all_kcfg = FileHandler.read_kconfig_parser(os.path.join(self.args.build_root, SLK_KCONFIG))
-        Data.current_kcfg = []
-        for hdr in HDRS:
-            Data.current_kcfg.extend(all_kcfg.get(hdr, []))
-        Data.current_kcfg = KCFG.parse_opts_strs(Data.current_kcfg)
-
-        Data.kcfg_exclude = FileHandler.read_raw(os.path.join(self.args.build_root, SLK_KCONFIG_EXCLUDE))
 
         new_up = set(FileHandler.read_dir(self.args.patches, "*.patch"))
         new_non_up = set(FileHandler.read_dir(self.args.non_up_patches, "*.patch"))
@@ -239,6 +229,7 @@ class PostProcess(HwMgmtAction):
                 print("-> FATAL: Patch {} not found either in upstream or non-upstream list".format(patch))
                 if not self.args.is_test:
                     sys.exit(1)
+        Data.k_ver = get_kver(self.args.kernel_version)
 
     def find_mlnx_hw_mgmt_markers(self):
         """ Find the indexes where the current mlnx patches sits in SLK_SERIES file """
@@ -262,6 +253,80 @@ class PostProcess(HwMgmtAction):
         for patch in Data.new_up:
             src_path = os.path.join(self.args.patches, patch)
             shutil.copy(src_path, os.path.join(self.args.build_root, SLK_PATCH_LOC))
+
+    def read_bmc_patches(self):
+        """ Read BMC-only patch list and separate them from the standard hw-mgmt patches. """
+        if not self.args.bmc_patches or not os.path.isfile(self.args.bmc_patches):
+            return
+        raw = FileHandler.read_strip_minimal(self.args.bmc_patches)
+        Data.bmc_patches = [p + "\n" for p in raw]
+        if Data.bmc_patches:
+            bmc_set = set(raw)
+            # Remove BMC patches from standard lists so they don't go into mellanox_hw_mgmt block
+            Data.new_up = [p for p in Data.new_up if p not in bmc_set]
+            Data.new_non_up = [p for p in Data.new_non_up if p not in bmc_set]
+            Data.new_series = [p for p in Data.new_series if p not in bmc_set]
+            print("\n -> POST: {} BMC patches separated:\n{}".format(
+                len(Data.bmc_patches), "".join(Data.bmc_patches)))
+
+    def find_bmc_markers(self, series):
+        """ Return (start, end) of nvidia_aspeed_bmc markers in series; exit if absent. """
+        start, end = FileHandler.find_marker_indices(series, MLNX_ASPEED_MARKER)
+        if start < 0 or end >= len(series):
+            print("-> FATAL: {} markers not found in {}. "
+                  "Please update sonic-linux-kernel to include the markers.".format(
+                      MLNX_ASPEED_MARKER, SLK_SERIES))
+            sys.exit(1)
+        return start, end
+
+    def rm_old_bmc_patches(self):
+        """ Delete old BMC patch files from patches-sonic/ (mirrors rm_old_up_mlnx). """
+        series_path = os.path.join(self.args.build_root, SLK_SERIES)
+        old_series = FileHandler.read_raw(series_path)
+        start, end = self.find_bmc_markers(old_series)
+        print("\n -> POST: Removed the following old BMC patches:")
+        index = start + 1
+        while index < end:
+            file_n = os.path.join(self.args.build_root, os.path.join(SLK_PATCH_LOC, old_series[index].strip()))
+            if os.path.isfile(file_n):
+                print(old_series[index].strip())
+                os.remove(file_n)
+            index = index + 1
+
+    def write_bmc_series_block(self):
+        """ Rebuild the nvidia_aspeed_bmc block in the series file from Data.bmc_patches.
+            Mirrors the mellanox_hw_mgmt cleanup flow: rebuilding unconditionally ensures
+            patches dropped by hw-mgmt (including a full drop of BMC support) are cleared
+            from both the series file and patches-sonic/.
+        """
+        # Gate on the argument (always supplied by the Makefile in BMC-capable builds);
+        # skip entirely when not provided so legacy/manual runs without BMC are unaffected.
+        if not self.args.bmc_patches or not os.path.isfile(self.args.bmc_patches):
+            return
+
+        # Remove old BMC patch files first (same pattern as rm_old_up_mlnx)
+        self.rm_old_bmc_patches()
+
+        # 1. Update in-memory series (written by write_final_slk_series earlier) between markers
+        start, end = self.find_bmc_markers(Data.up_slk_series)
+        Data.up_slk_series = FileHandler.insert_lines(Data.up_slk_series, start, end, Data.bmc_patches)
+
+        start, end = self.find_bmc_markers(Data.agg_slk_series)
+        Data.agg_slk_series = FileHandler.insert_lines(Data.agg_slk_series, start, end, Data.bmc_patches)
+
+        # 2. Write updated series to disk (block may be empty; that clears stale content)
+        series_path = os.path.join(self.args.build_root, SLK_SERIES)
+        FileHandler.write_lines(series_path, Data.up_slk_series, True)
+        print("\n -> POST: nvidia_aspeed_bmc block written to series ({} patches)".format(len(Data.bmc_patches)))
+
+        # 3. Copy BMC patches to patches-sonic/ (no-op when Data.bmc_patches is empty)
+        for patch in Data.bmc_patches:
+            name = patch.strip()
+            src = os.path.join(self.args.patches, name)
+            if not os.path.isfile(src):
+                src = os.path.join(self.args.non_up_patches, name)
+            if os.path.isfile(src):
+                shutil.copy(src, os.path.join(self.args.build_root, SLK_PATCH_LOC))
 
     def write_final_slk_series(self):
         tmp_new_up = [d+"\n" for d in Data.new_up]
@@ -288,9 +353,15 @@ class PostProcess(HwMgmtAction):
             sys.exit(1)
         
     def mv_new_non_up_mlnx(self):
+        dest_fpath = os.path.join(self.args.build_root, NON_UP_PATCH_LOC)
+        if not Data.new_non_up and os.path.exists(dest_fpath):
+            os.rmdir(dest_fpath)
+            return
+
         for patch in Data.new_non_up:
             src_path = os.path.join(self.args.non_up_patches, patch)
-            shutil.copy(src_path, os.path.join(self.args.build_root, NON_UP_PATCH_LOC))
+            os.makedirs(dest_fpath, exist_ok=True)
+            shutil.copy(src_path, dest_fpath)
     
     def construct_series_with_non_up(self):
         Data.agg_slk_series = copy.deepcopy(Data.up_slk_series) 
@@ -318,58 +389,32 @@ class PostProcess(HwMgmtAction):
         FileHandler.write_lines(self.args.current_non_up_patches, lines)
         print("\n -> POST: series file updated with non-upstream patches \n{}".format("".join(Data.agg_slk_series)))
 
-    def write_series_diff(self):
-        diff = difflib.unified_diff(Data.up_slk_series, Data.agg_slk_series, fromfile='a/patch/series', tofile="b/patch/series", lineterm="\n")
+    def get_series_diff(self):
+        diff = difflib.unified_diff(Data.up_slk_series, Data.agg_slk_series, fromfile='a/patches-sonic/series', tofile="b/patches-sonic/series", lineterm="\n")
         lines = []
         for line in diff:
             lines.append(line)
         print("\n -> POST: final series.diff \n{}".format("".join(lines)))
-        FileHandler.write_lines(os.path.join(self.args.build_root, NON_UP_PATCH_DIFF), lines, True)
+        return lines
     
-    def check_kconfig_conflicts(self):
-        # current config under mellanox marker
-        old_mlnx_kcfg =  FileHandler.read_kconfig_inclusion(os.path.join(self.args.build_root, SLK_KCONFIG))
-        old_mlnx_kcfg = KCFG.parse_opts_strs(old_mlnx_kcfg)
+    def get_merged_diff(self, series_diff: list, kcfg_diff: list) -> list:
+        if series_diff or kcfg_diff:
+            return series_diff + ["\n"] + kcfg_diff
+        else:
+            return []
 
-        print("-> INFO: [common] + [amd64] Kconfig: \n{}".format("\n".join(KCFG.get_writable_opts(Data.current_kcfg))))
-        print("-> INFO: current mellanox marker Kconfig: \n{}".format("\n".join(KCFG.get_writable_opts(old_mlnx_kcfg))))
-
-        # Filter the mellanox config from current config
-        conflict_prone = set(Data.current_kcfg)
-        for kcfg in old_mlnx_kcfg:
-            if kcfg in conflict_prone:
-                conflict_prone.remove(kcfg)
-
-        print("-> INFO: conflict prone Kconfig: \n{}".format("\n".join(KCFG.get_writable_opts(list(conflict_prone)))))
-        print("-> INFO: updated kconfig for mellanox marker: \n{}".format("\n".join(KCFG.get_writable_opts(Data.updated_kcfg))))
-
-        # check for conflicts
-        has_conflict = False
-        for (cfg, val) in Data.updated_kcfg:
-            for (cfg_o, val_o) in conflict_prone:
-                if cfg == cfg_o and val != val_o:
-                    print("-> ERR Conflict seen on the following kconfig: {}, old_opt: {}, new_opt: {}".format(cfg, val_o, val))
-                    has_conflict = True
-        return has_conflict
-
-    def handle_exclusions(self):
-        new_lines = []
-        curr_hdr = ""
-        for line_raw in Data.kcfg_exclude:
-            line = line_raw.strip()
-            should_exclude = False
-            if line:
-                match = re.search(KCFG_HDR_RE, line)
-                if match:
-                    curr_hdr = match.group(1)
-                else:
-                    for (kcfg, _) in Data.updated_kcfg:
-                        if kcfg == line and curr_hdr in HDRS:
-                            should_exclude = True
-            if not should_exclude:
-                new_lines.append(line_raw)
-        FileHandler.write_lines(os.path.join(self.args.build_root, SLK_KCONFIG_EXCLUDE), new_lines, True)
-        print("-> INFO: updated kconfig-exclusion: \n{}".format("".join(FileHandler.read_raw(os.path.join(self.args.build_root, SLK_KCONFIG_EXCLUDE)))))
+    def write_non_up_diff(self, series_diff, kcfg_diff):
+        final_diff = self.get_merged_diff(series_diff, kcfg_diff)
+        non_up_diff_path = os.path.join(self.args.build_root, NON_UP_DIFF)
+        if "".join(final_diff).strip():
+            # don't write anything if the diff just contains whitespaces
+            FileHandler.write_lines(non_up_diff_path, final_diff, True)
+        else:
+            # if nothing to write, delete the patch file
+            try:
+                os.remove(non_up_diff_path)
+            except OSError as error:
+                print("-> NOTICE File {} remove failed with error {}".format(non_up_diff_path, error))
 
     def list_patches(self):
         old_up_patches = []
@@ -378,18 +423,46 @@ class PostProcess(HwMgmtAction):
         old_non_up_patches = [ptch.strip() for ptch in Data.old_non_up]
         return old_up_patches, old_non_up_patches
 
-    def parse_id(self, id_):
-        if id_:
-            id_ = "https://github.com/gregkh/linux/commit/" + id_
-        return id_
+    def _get_patchwork(self, patch_name):
+        root_p = os.path.join(self.args.build_root, PATCH_TABLE_LOC)
+        patchwork_loc =  PATCHWORK_LOC.format(Data.k_ver)
+        file_dir = os.path.join(root_p, patchwork_loc)
+        file_loc = os.path.join(file_dir, f"{patch_name}.txt")
+        if not os.path.exists(file_loc):
+            return ""
+        print(f"-> INFO: Patchwork file {file_loc} is present")
+        lines = FileHandler.read_strip(file_loc)
+        for line in lines:
+            if "patchwork_link" not in line:
+                continue
+            tokens = line.split(":")
+            if len(tokens) < 2:
+                print(f"-> WARN: Invalid entry {line}, did not follow <key>:<value>")
+                continue
+            key = tokens[0]
+            values = tokens[1:]
+            if key == "patchwork_link":
+                desc = ":".join(values)
+                desc = desc.strip()
+                print(f"-> INFO: Patch work link for patch {patch_name} : {desc}")
+                return desc
+        return ""
+
+    def _fetch_description(self, patch, id_):
+        desc = parse_id(id_)
+        if not desc:
+            # not an upstream patch, check if the patchwork link is present and fetch it
+            desc = self._get_patchwork(patch)
+        return desc
 
     def create_commit_msg(self, table):
-        title = COMMIT_TITLE.format(self.args.hw_mgmt_ver) 
+        title = COMMIT_TITLE.format(self.args.hw_mgmt_ver)
         changes_slk, changes_sb = {}, {}
         old_up_patches, old_non_up_patches = self.list_patches()
+        print(old_up_patches)
         for patch in table:
-            id_ = self.parse_id(patch.get(COMMIT_ID, ""))
             patch_ = patch.get(PATCH_NAME)
+            id_ = self._fetch_description(patch_, patch.get(COMMIT_ID, ""))
             if patch_ in Data.new_up and patch_ not in old_up_patches:
                 changes_slk[patch_] = id_
                 print(f"-> INFO: Patch: {patch_}, Commit: {id_}, added to linux-kernel description")
@@ -400,6 +473,20 @@ class PostProcess(HwMgmtAction):
                 print(f"-> INFO: Patch: {patch_}, Commit: {id_}, is not added")
         slk_commit_msg = title + "\n" + build_commit_description(changes_slk)
         sb_commit_msg = title + "\n" + build_commit_description(changes_sb)
+
+        # Append BMC patch list to the SLK commit message from Patch_BMC_Status_Table.txt
+        path = os.path.join(self.args.build_root, PATCH_TABLE_LOC)
+        bmc_table = load_patch_table(path, Data.k_ver, "Patch_BMC_Status_Table.txt")
+        if bmc_table:
+            bmc_changes = {}
+            for patch in bmc_table:
+                patch_ = patch.get(PATCH_NAME)
+                if patch_:
+                    id_ = self._fetch_description(patch_, patch.get(COMMIT_ID, ""))
+                    bmc_changes[patch_] = id_
+            if bmc_changes:
+                slk_commit_msg = slk_commit_msg + build_commit_description(bmc_changes, "BMC Patch List")
+
         print(f"-> INFO: SLK Commit Message: \n {slk_commit_msg}")
         print(f"-> INFO: SB Commit Message: \n {sb_commit_msg}")
         return sb_commit_msg, slk_commit_msg
@@ -407,18 +494,11 @@ class PostProcess(HwMgmtAction):
     def perform(self):
         """ Read the data output from the deploy_kernel_patches.py script 
             and move to appropriate locations """
+        # Handle Patches related logic
         self.read_data()
+        # Separate BMC patches so they don't go into the mellanox_hw_mgmt block
+        self.read_bmc_patches()
         self.find_mlnx_hw_mgmt_markers()
-        # Find and report conflicts in new kconfig
-        if self.check_kconfig_conflicts():
-            print("-> FATAL Conflicts in kconfig-inclusion detected, exiting...")
-            sys.exit(1)
-        else:
-            # Write the new kcfg to the new file
-            path = os.path.join(self.args.build_root, SLK_KCONFIG)
-            FileHandler.write_lines_marker(path, KCFG.get_writable_opts(Data.updated_kcfg), MLNX_KFG_MARKER)
-        self.handle_exclusions()
-        # Handle Upstream patches
         self.rm_old_up_mlnx()
         self.mv_new_up_mlnx()
         self.write_final_slk_series()
@@ -426,11 +506,16 @@ class PostProcess(HwMgmtAction):
         self.rm_old_non_up_mlnx()
         self.mv_new_non_up_mlnx()
         self.construct_series_with_non_up()
-        self.write_series_diff()
+        # Insert BMC patches between nvidia_aspeed_bmc markers in the series file
+        self.write_bmc_series_block()
+        series_diff = self.get_series_diff()
+        # handle kconfig and get any diff
+        kcfg_diff = self.kcfg_handler.perform()
+        self.write_non_up_diff(series_diff, kcfg_diff)
 
         path = os.path.join(self.args.build_root, PATCH_TABLE_LOC)
-        patch_table = load_patch_table(path, self.args.kernel_version)
-        
+        patch_table = load_patch_table(path, Data.k_ver)
+
         sb_msg, slk_msg = self.create_commit_msg(patch_table)
 
         if self.args.sb_msg and sb_msg:
@@ -440,6 +525,8 @@ class PostProcess(HwMgmtAction):
         if self.args.slk_msg:
             with open(self.args.slk_msg, 'w') as f:
                 f.write(slk_msg) 
+        
+
 
 def create_parser():
     # Create argument parser
@@ -451,7 +538,14 @@ def create_parser():
     # Optional arguments
     parser.add_argument("--patches", type=str)
     parser.add_argument("--non_up_patches", type=str)
-    parser.add_argument("--config_inclusion", type=str)
+    parser.add_argument("--config_base_amd", type=str, required=True)
+    parser.add_argument("--config_base_arm", type=str, required=True)
+    parser.add_argument("--config_inc_amd", type=str, required=True)
+    parser.add_argument("--config_inc_arm", type=str, required=True)
+    parser.add_argument("--config_inc_down_amd", type=str)
+    parser.add_argument("--config_inc_down_arm", type=str)
+    parser.add_argument("--config_base_aspeed", type=str, required=True)
+    parser.add_argument("--config_inc_aspeed", type=str, required=True)
     parser.add_argument("--series", type=str)
     parser.add_argument("--current_non_up_patches", type=str)
     parser.add_argument("--build_root", type=str)
@@ -459,6 +553,8 @@ def create_parser():
     parser.add_argument("--kernel_version", type=str, required=True)
     parser.add_argument("--sb_msg", type=str, required=False, default="")
     parser.add_argument("--slk_msg", type=str, required=False, default="")
+    parser.add_argument("--bmc_patches", type=str, required=False, default="",
+                        help="File listing BMC-only patch names (one per line).")
     parser.add_argument("--is_test", action="store_true")
     return parser
 
@@ -467,4 +563,3 @@ if __name__ == '__main__':
     parser = create_parser()
     action = HwMgmtAction.get(parser.parse_args())
     action.perform()
-
