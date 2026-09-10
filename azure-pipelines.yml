@@ -87,6 +87,9 @@ stages:
   # The 202405 test framework needs the Python 3.8 / Ansible 2.13 runtime.
   - name: SONIC_MGMT_IMAGE
     value: sonicdev-microsoft.azurecr.io:443/docker-sonic-mgmt@sha256:d9ee5be397d022d72140b8ab8e7f64161bc766ebac1b4eee8165c115ad82bb26
+  # Use the registry-qualified name expected by VMSS image provisioning.
+  - name: CEOS_IMAGE
+    value: soniccr1.azurecr.io/ceosimage:4.29.3M-1
 
 # For every test job:
 # continueOnError: false means it's a required test job and will block merge if it fails
@@ -165,6 +168,7 @@ stages:
         MAX_WORKER: $(T0_INSTANCE_NUM)
         MGMT_BRANCH: $(BUILD_BRANCH)
         SETUP_CONTAINER_PARAMS: "-i $(SONIC_MGMT_IMAGE)"
+        ADD_TOPO_PARAMS: "-e ceos_image=$(CEOS_IMAGE)"
         PTF_IMAGE_TAG: $(BUILD_BRANCH)
 
   - job: t0_2vlans_elastictest
@@ -181,6 +185,7 @@ stages:
         MAX_WORKER: $(T0_2VLANS_INSTANCE_NUM)
         MGMT_BRANCH: $(BUILD_BRANCH)
         SETUP_CONTAINER_PARAMS: "-i $(SONIC_MGMT_IMAGE)"
+        ADD_TOPO_PARAMS: "-e ceos_image=$(CEOS_IMAGE)"
         DEPLOY_MG_EXTRA_PARAMS: "-e vlan_config=two_vlan_a"
         PTF_IMAGE_TAG: $(BUILD_BRANCH)
 
@@ -197,6 +202,7 @@ stages:
         MAX_WORKER: $(T1_LAG_INSTANCE_NUM)
         MGMT_BRANCH: $(BUILD_BRANCH)
         SETUP_CONTAINER_PARAMS: "-i $(SONIC_MGMT_IMAGE)"
+        ADD_TOPO_PARAMS: "-e ceos_image=$(CEOS_IMAGE)"
         PTF_IMAGE_TAG: $(BUILD_BRANCH)
 
   - job: multi_asic_elastictest
@@ -214,6 +220,7 @@ stages:
           NUM_ASIC: 4
           MGMT_BRANCH: $(BUILD_BRANCH)
           SETUP_CONTAINER_PARAMS: "-i $(SONIC_MGMT_IMAGE)"
+          ADD_TOPO_PARAMS: "-e ceos_image=$(CEOS_IMAGE)"
           PTF_IMAGE_TAG: $(BUILD_BRANCH)
 
   - job: dualtor_elastictest
@@ -229,6 +236,7 @@ stages:
           MAX_WORKER: $(T0_DUALTOR_INSTANCE_NUM)
           MGMT_BRANCH: $(BUILD_BRANCH)
           SETUP_CONTAINER_PARAMS: "-i $(SONIC_MGMT_IMAGE)"
+          ADD_TOPO_PARAMS: "-e ceos_image=$(CEOS_IMAGE)"
           COMMON_EXTRA_PARAMS: "--disable_loganalyzer "
           PTF_IMAGE_TAG: $(BUILD_BRANCH)
 
@@ -263,6 +271,7 @@ stages:
           MAX_WORKER: $(T0_SONIC_INSTANCE_NUM)
           MGMT_BRANCH: $(BUILD_BRANCH)
           SETUP_CONTAINER_PARAMS: "-i $(SONIC_MGMT_IMAGE)"
+          ADD_TOPO_PARAMS: "-e ceos_image=$(CEOS_IMAGE)"
           PTF_IMAGE_TAG: $(BUILD_BRANCH)
 
 #  - job: wan_elastictest
